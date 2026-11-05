@@ -55,7 +55,8 @@ if (fs.existsSync(dist)) {
 }
 
 const PORT = Number(process.env.PORT) || 3001;
-const srv = app.listen(PORT, () => {
+const srv = app.listen(PORT, (err) => {
+  if (err) return; // handled by the 'error' listener below (Express 5 also calls back on failure)
   console.log(`\n  LocalPMS API running on http://localhost:${PORT}`);
   if (fs.existsSync(dist)) console.log(`  Open http://localhost:${PORT} in your browser`);
   console.log('  Demo login: admin@demo.com / demo123\n');
