@@ -1,0 +1,32 @@
+{
+  "name": "storagepro-pms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "All-in-one self storage property management system (demo build)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"node --disable-warning=ExperimentalWarning --watch-path=server server/index.js\" \"vite\"",
+    "build": "vite build",
+    "start": "vite build && node --disable-warning=ExperimentalWarning server/index.js",
+    "serve": "node --disable-warning=ExperimentalWarning server/index.js",
+    "seed": "node --disable-warning=ExperimentalWarning server/seed.js"
+  },
+  "dependencies": {
+    "express": "^5.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.4",
+    "@vitejs/plugin-react": "^6.2.1",
+    "concurrently": "^10.0.6",
+    "lucide-react": "^1.69.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5",
+    "recharts": "^3.10.1",
+    "tailwindcss": "^4.3.4",
+    "vite": "^8.3.6"
+  }
+}
