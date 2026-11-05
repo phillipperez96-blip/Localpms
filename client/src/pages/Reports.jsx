@@ -7,7 +7,7 @@ import { Card, PageHeader, Button, Spinner, Input, Select, ErrorBox, cx } from '
 import DataTable from '../components/DataTable.jsx';
 
 const fmt = (type, v) => (v === null || v === undefined || v === '' ? '' : type === 'money' ? money(v) : type === 'pct' ? pct(v) : type === 'number' ? num(v) : type === 'date' ? date(String(v).slice(0, 10)) : type === 'datetime' ? dateTime(v) : v);
-const PRESETS = [['This month', () => [monthStart(), today()]], ['Last 30 days', () => [addDays(today(), -30), today()]], ['Last month', () => { const d = new Date(); const s = new Date(d.getFullYear(), d.getMonth() - 1, 1), e = new Date(d.getFullYear(), d.getMonth(), 0); const f = (x) => x.toISOString().slice(0, 10); return [f(s), f(e)]; }], ['Year to date', () => [today().slice(0, 4) + '-01-01', today()]], ['Last 12 months', () => [addDays(today(), -365), today()]]];
+const PRESETS = [['This month', () => [monthStart(), today()]], ['Last 30 days', () => [addDays(today(), -30), today()]], ['Last month', () => { const d = new Date(); const s = new Date(d.getFullYear(), d.getMonth() - 1, 1), e = new Date(d.getFullYear(), d.getMonth(), 0); const f = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; return [f(s), f(e)]; }], ['Year to date', () => [today().slice(0, 4) + '-01-01', today()]], ['Last 12 months', () => [addDays(today(), -365), today()]]];
 
 export default function Reports() {
   const { fac, facility, facilityObj } = useApp();

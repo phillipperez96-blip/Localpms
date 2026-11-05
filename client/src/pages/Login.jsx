@@ -6,8 +6,8 @@ import { Button, Input, Field, ErrorBox } from '../components/ui.jsx';
 
 export default function Login() {
   const { login } = useApp();
-  const [email, setEmail] = useState('admin@demo.com');
-  const [password, setPassword] = useState('demo123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [accounts, setAccounts] = useState([]);
@@ -31,7 +31,7 @@ export default function Login() {
         </div>
         <div className="p-8">
           <h1 className="text-xl font-bold text-slate-900">Sign in</h1>
-          <p className="mb-5 text-sm text-slate-500">Use any demo account. Password for all: <b>demo123</b></p>
+          <p className="mb-5 text-sm text-slate-500">{accounts.length ? <>Use any demo account. Password for all: <b>demo123</b></> : 'Sign in with your company account.'}</p>
           <ErrorBox error={err} />
           <form onSubmit={submit} className="space-y-3">
             <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>

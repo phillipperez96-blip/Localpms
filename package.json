@@ -5,14 +5,15 @@
   "description": "All-in-one self storage property management system (demo build)",
   "type": "module",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"node --disable-warning=ExperimentalWarning --watch-path=server server/index.js\" \"vite\"",
     "build": "vite build",
     "start": "vite build && node --disable-warning=ExperimentalWarning server/index.js",
     "serve": "node --disable-warning=ExperimentalWarning server/index.js",
-    "seed": "node --disable-warning=ExperimentalWarning server/seed.js"
+    "seed": "node --disable-warning=ExperimentalWarning server/seed.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 tests/engine.test.mjs tests/api.test.mjs"
   },
   "dependencies": {
     "express": "^5.3.0"

@@ -8,17 +8,49 @@ This build is meant for **demonstration**. It ships with realistic demo data for
 
 ## Quick start
 
-**Requirements:** [Node.js 22.5 or newer](https://nodejs.org) (the database uses Node's built-in SQLite, so nothing else needs to be installed).
+### Easiest way (Windows)
+1. Install **Node.js LTS** (version 22.13 or newer) from https://nodejs.org. Accept all the defaults.
+2. Download this project: on GitHub click **Code → Download ZIP**, then unzip it. If you use Git, run `git clone` instead.
+3. Double-click **`Start LocalPMS.bat`** in the project folder.
+   - The first run installs everything automatically, which takes about a minute.
+   - Your browser then opens to the app. If it doesn't, go to **http://localhost:3001**.
+4. Leave the black window open while you use the app. Close it to stop.
 
+On a Mac, double-click **`Start LocalPMS.command`** instead. If macOS blocks it, right-click it and choose **Open**.
+
+### From a terminal (any OS)
 ```bash
 npm install
 npm start
 ```
+Then open **http://localhost:3001**.
 
-Open **http://localhost:3001** and sign in. All demo accounts use the password `demo123`, and the login screen has one-click buttons for each role:
+### Signing in
+All demo accounts use the password `demo123`, and the login screen has one-click buttons for each role:
 
 | Role | Email | Sees |
 |---|---|---|
+| Admin | admin@demo.com | Everything, all facilities |
+| District Manager | dm@demo.com | All facilities, performs audits |
+| Area Manager | am@demo.com | Riverside + Oak Hill |
+| Property Manager | pm@demo.com / pm2@ / pm3@ | One facility each |
+| Assistant Manager | asst@demo.com | Front-desk functions, Riverside |
+
+The first launch creates the database (`data/storage.db`) and generates demo data dated around the day you first run it. To start over, use **Settings → Integrations & System → Reset Demo**, or run `npm run seed`.
+
+### Troubleshooting
+| Problem | Fix |
+|---|---|
+| "LocalPMS needs Node.js 22.13 or newer" or `bad option: --disable-warning` | Install the current LTS from https://nodejs.org and try again |
+| "Port 3001 is already in use" | Another copy is already running. Close it, or start on another port: `set PORT=3002 && npm start` (Windows) or `PORT=3002 npm start` (Mac) |
+| `'npm' is not recognized` | Restart your PC after installing Node.js so the PATH updates |
+| Data looks wrong / want a fresh demo | Settings → Integrations & System → Reset Demo, or `npm run seed` |
+
+**Development mode** (hot reload): `npm run dev`, then open http://localhost:5173.
+
+**Automated tests:** `npm test` runs 34 engine and API tests on a throwaway database. They cover billing math, the lien cycle, permissions, facility isolation and every workflow.
+
+---|---|---|
 | Admin | admin@demo.com | Everything, all facilities |
 | District Manager | dm@demo.com | All facilities, performs audits |
 | Area Manager | am@demo.com | Riverside + Oak Hill |
@@ -114,10 +146,10 @@ Every outside service sits behind an adapter in `server/services/integrations.js
 To use a different vendor (Postmark, Authorize.net, a specific gate brand, a certified-mail API, and so on), edit only the matching function in `server/services/integrations.js`.
 
 ### Production checklist
-- Host it on any Node 22+ server or platform. It's one process that serves both the API and the web app; run `npm start` with `PORT` set.
+- Host it on any Node 22.13+ server or platform. It's one process that serves both the API and the web app; run `npm start` with `PORT` set.
 - Put it behind HTTPS (for example a reverse proxy or the platform's TLS).
 - Back up the `data/` folder (SQLite database plus uploaded audit photos). For many facilities or heavy concurrent use, the data layer in `server/db.js` can be moved to Postgres.
-- Replace the demo users and passwords. Use **Settings → Users**, or reset the demo and then deactivate the demo accounts.
+- Set `HIDE_DEMO_ACCOUNTS=1` in `.env` so the login screen no longer lists accounts, and replace the demo users and passwords. Use **Settings → Users**, or reset the demo and then deactivate the demo accounts.
 - Review the default lien schedule, notice templates and fees against your state's self-storage lien law.
 - The nightly process runs automatically while the server is up: it posts rent, applies late fees, advances lien steps, applies rent increases, runs autopay, expires reservations and syncs the gate. It catches up on start-up and can also be run on demand from Settings.
 

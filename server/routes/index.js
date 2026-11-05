@@ -33,6 +33,7 @@ r.post('/auth/login', (req, res) => {
 
 // Public list of demo accounts for the login screen quick-switcher.
 r.get('/auth/demo-accounts', (req, res) => {
+  if (process.env.HIDE_DEMO_ACCOUNTS) return res.json([]);
   res.json(all('SELECT u.name, u.email, r.name role FROM users u JOIN roles r ON r.id=u.role_id WHERE u.active=1 ORDER BY r.rank DESC, u.id'));
 });
 

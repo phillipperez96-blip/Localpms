@@ -232,12 +232,14 @@ export async function seedDatabase() {
     tx(() => {
       // ---- completed auctions (historical)
       for (let i = 0; i < 3; i++) {
-        const u = get("SELECT * FROM units WHERE facility_id=? AND status='vacant' ORDER BY RANDOM() LIMIT 1", fid);
+        // a vacant unit whose rental history leaves room for a ~1-year tenancy that ended in an auction
+        const u = get(`SELECT u.*, (SELECT MAX(move_out_date) FROM rentals r WHERE r.unit_id=u.id) last_out FROM units u WHERE u.facility_id=? AND u.status='vacant'
+          AND COALESCE((SELECT MAX(move_out_date) FROM rentals r WHERE r.unit_id=u.id), '0000') < ? ORDER BY RANDOM() LIMIT 1`, fid, addDays(T, -330));
         if (!u) break;
-        const d = addDays(T, -ri(20, 200));
+        const d = addDays(T, -ri(20, 120));
         const tid = insert('tenants', { facility_id: fid, first_name: pick(FIRST), last_name: pick(LAST), phone: `(512) 555-${ri(1000, 9999)}`, email: `former${ri(100, 999)}@example.com`, status: 'former', gate_code: generateGateCode(), address: `${ri(100, 9999)} ${pick(STREETS)}`, city: 'Austin', state: 'TX', zip: '78745' });
         const owed = ri(380, 900);
-        const rid = insert('rentals', { facility_id: fid, tenant_id: tid, unit_id: u.id, move_in_date: addDays(d, -ri(200, 500)), move_out_date: d, rent: u.street_rate, status: 'ended', lien_status: 'sold', move_out_reason: 'Auctioned' });
+        const rid = insert('rentals', { facility_id: fid, tenant_id: tid, unit_id: u.id, move_in_date: u.last_out ? addDays(u.last_out, ri(5, 30)) : addDays(d, -ri(200, 500)), move_out_date: d, rent: u.street_rate, status: 'ended', lien_status: 'sold', move_out_reason: 'Auctioned' });
         const sale = ri(150, 1400);
         const applied = Math.min(sale, owed);
         postLedger({ facility_id: fid, tenant_id: tid, rental_id: rid, date: addDays(d, -80), type: 'charge', category: 'rent', description: 'Unpaid rent & fees', amount: owed });

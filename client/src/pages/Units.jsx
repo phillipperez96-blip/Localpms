@@ -27,7 +27,7 @@ export const STATE_STYLE = {
 export default function Units() {
   const { fac, facility, can } = useApp();
   const [sp, setSp] = useSearchParams();
-  const [tab, setTab] = useState(facility === 'all' ? 'list' : 'map');
+  const [tab, setTab] = useState(facility === 'all' || sp.get('status') ? 'list' : 'map');
   const { data, loading, reload } = useApi(fac('/units'));
   const [sel, setSel] = useState(null);
   const [adding, setAdding] = useState(false);

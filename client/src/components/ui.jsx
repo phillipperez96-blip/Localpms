@@ -170,7 +170,7 @@ export function useAction() {
   const [busy, setBusy] = useState(false);
   const run = async (fn, success) => {
     setBusy(true);
-    try { const r = await fn(); if (success) toast(typeof success === 'function' ? success(r) : success); return r; }
+    try { const r = await fn(); if (success) toast(typeof success === 'function' ? success(r ?? {}) : success); return r; }
     catch (e) { toast(e.message, 'error'); return undefined; }
     finally { setBusy(false); }
   };

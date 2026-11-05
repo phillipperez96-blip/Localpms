@@ -23,7 +23,7 @@ export default function Gate() {
   return (
     <div>
       <PageHeader icon={KeyRound} title="Gate Access" subtitle={data.connected ? 'Connected to gate system' : 'Demo mode – gate changes are simulated (connect in Settings → Integrations)'}
-        actions={<Button variant="secondary" icon={RefreshCw} loading={busy} onClick={() => run(() => api.post(fac('/gate/sync'), { full: true }).then(reload), (r) => `Pushed ${r.pushed} codes to gate system`)}>Sync All Codes</Button>} />
+        actions={<Button variant="secondary" icon={RefreshCw} loading={busy} onClick={() => run(() => api.post(fac('/gate/sync'), { full: true }).then((r) => { reload(); return r; }), (r) => `Pushed ${r.pushed} codes to gate system`)}>Sync All Codes</Button>} />
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Active codes" value={data.rows.length} icon={KeyRound} />
         <Stat label="Access denied" value={denied.length} icon={Lock} tone="red" onClick={() => { setTab('codes'); setShow('denied'); }} />

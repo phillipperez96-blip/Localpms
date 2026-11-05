@@ -90,7 +90,7 @@ function ECRI({ onDone }) {
         ]} />
       )}
       {sched && (
-        <Modal open onClose={() => setSched(null)} size="sm" title={`Schedule ${chosen.length} rent increase(s)`} footer={<><Button variant="secondary" onClick={() => setSched(null)}>Cancel</Button><Button loading={busy} onClick={() => run(() => api.post('/rates/increases', { ...sched, items: chosen.map((r) => ({ rental_id: r.rental_id, new_rent: r.new_rent })) }).then(() => { setSched(null); setSel(new Set()); onDone(); }), (r) => `${r.scheduled} increases scheduled`)}>Schedule</Button></>}>
+        <Modal open onClose={() => setSched(null)} size="sm" title={`Schedule ${chosen.length} rent increase(s)`} footer={<><Button variant="secondary" onClick={() => setSched(null)}>Cancel</Button><Button loading={busy} onClick={() => run(() => api.post('/rates/increases', { ...sched, items: chosen.map((r) => ({ rental_id: r.rental_id, new_rent: r.new_rent })) }).then((r) => { setSched(null); setSel(new Set()); onDone(); return r; }), (r) => `${r.scheduled} increases scheduled`)}>Schedule</Button></>}>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Notice date"><Input type="date" value={sched.notice_date} onChange={(e) => setSched({ ...sched, notice_date: e.target.value })} /></Field>
             <Field label="Effective date"><Input type="date" value={sched.effective_date} onChange={(e) => setSched({ ...sched, effective_date: e.target.value })} /></Field>

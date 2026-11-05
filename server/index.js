@@ -3,6 +3,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Friendly check: the built-in SQLite database needs Node.js 22.13 or newer.
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 13)) {
+  console.error(`\n  LocalPMS needs Node.js 22.13 or newer (you have ${process.version}).\n  Download the current LTS version from https://nodejs.org and try again.\n`);
+  process.exit(1);
+}
 const envFile = path.join(__dirname, '..', '.env');
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 
@@ -48,8 +55,20 @@ if (fs.existsSync(dist)) {
 }
 
 const PORT = Number(process.env.PORT) || 3001;
-app.listen(PORT, () => {
+const srv = app.listen(PORT, () => {
   console.log(`\n  LocalPMS API running on http://localhost:${PORT}`);
   if (fs.existsSync(dist)) console.log(`  Open http://localhost:${PORT} in your browser`);
   console.log('  Demo login: admin@demo.com / demo123\n');
+  if (process.env.OPEN_BROWSER && fs.existsSync(dist)) openBrowser(`http://localhost:${PORT}`);
 });
+srv.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') console.error(`\n  Port ${PORT} is already in use. Close the other copy of LocalPMS, or start on another port, e.g.\n    Windows:   set PORT=3002 && npm start\n    Mac/Linux: PORT=3002 npm start\n`);
+  else console.error(e);
+  process.exit(1);
+});
+
+async function openBrowser(url) {
+  const { spawn } = await import('node:child_process');
+  const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+  try { spawn(cmd, args, { stdio: 'ignore', detached: true }).unref(); } catch { /* no browser available */ }
+}

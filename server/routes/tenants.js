@@ -233,7 +233,7 @@ r.post('/movein', requirePerm('movein.perform'), async (req, res) => {
   }
   const result = tx(() => {
     let tenantId = b.tenant_id;
-    if (tenantId) { const t = get('SELECT * FROM tenants WHERE id=?', tenantId); if (!t) throw httpError(404, 'Tenant not found'); update('tenants', tenantId, { status: 'active', ...pickTenant(b.tenant || {}) }); }
+    if (tenantId) { const t = get('SELECT * FROM tenants WHERE id=?', tenantId); if (!t) throw httpError(404, 'Tenant not found'); if (t.facility_id !== f.id) throw httpError(400, 'That tenant belongs to another facility – create a new tenant record here instead'); update('tenants', tenantId, { status: 'active', ...pickTenant(b.tenant || {}) }); }
     else {
       if (!b.tenant?.first_name || !b.tenant?.last_name) throw httpError(400, 'Tenant first and last name are required');
       tenantId = insert('tenants', { ...pickTenant(b.tenant), facility_id: f.id, gate_code: b.gate_code || generateGateCode(), status: 'active', lead_id: b.lead_id || null });
