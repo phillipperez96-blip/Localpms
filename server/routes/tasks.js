@@ -10,7 +10,7 @@ const r = Router();
 r.get('/tasks', (req, res) => {
   const ids = scope(req);
   res.json(all(`SELECT t.*, a.name assignee, c.name creator, f.code facility_code, tn.first_name tenant_first, tn.last_name tenant_last FROM tasks t LEFT JOIN users a ON a.id=t.assigned_to LEFT JOIN users c ON c.id=t.created_by
-    JOIN facilities f ON f.id=t.facility_id LEFT JOIN tenants tn ON tn.id=t.tenant_id WHERE t.facility_id IN ${inList(ids)} ORDER BY t.status='done', t.due_date IS NULL, t.due_date, t.id DESC LIMIT 500`, ...ids));
+    JOIN facilities f ON f.id=t.facility_id LEFT JOIN tenants tn ON tn.id=t.tenant_id WHERE t.facility_id IN ${inList(ids)} ORDER BY t.status='done', t.priority='urgent' DESC, t.due_date IS NULL, t.due_date, t.id DESC LIMIT 500`, ...ids));
 });
 
 const F = ['title', 'description', 'due_date', 'priority', 'category', 'assigned_to', 'tenant_id', 'unit_id'];
@@ -28,19 +28,27 @@ r.put('/tasks/:id', (req, res) => {
   if (!t) throw httpError(404, 'Not found');
   assertFacility(req, t.facility_id);
   const ch = Object.fromEntries(F.filter((k) => req.body[k] !== undefined).map((k) => [k, req.body[k] === '' ? null : req.body[k]]));
+  if (t.source === 'lien_payment') { delete ch.title; delete ch.description; delete ch.priority; delete ch.tenant_id; }
   if (req.body.status) {
+    if (t.source === 'lien_payment' && req.body.status === 'done') {
+      const note = String(req.body.resolution || '').trim();
+      if (!note) throw httpError(400, 'Describe the steps taken before resolving a lien payment alert');
+      ch.resolution = note;
+    }
+    if (t.source === 'lien_payment' && req.body.status === 'open' && t.status === 'done') throw httpError(400, 'Resolved lien payment alerts cannot be reopened');
     ch.status = req.body.status;
     ch.completed_at = req.body.status === 'done' ? new Date().toISOString() : null;
     ch.completed_by = req.body.status === 'done' ? req.user.id : null;
   }
   update('tasks', t.id, ch);
-  if (req.body.status) logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: 'task', entity_id: t.id, action: req.body.status === 'done' ? 'complete' : 'reopen', details: `${req.body.status === 'done' ? 'Completed' : 'Reopened'}: ${t.title}` });
+  if (req.body.status) logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: t.tenant_id && t.source === 'lien_payment' ? 'tenant' : 'task', entity_id: t.tenant_id && t.source === 'lien_payment' ? t.tenant_id : t.id, action: req.body.status === 'done' ? (t.source === 'lien_payment' ? 'lien_payment_resolved' : 'complete') : 'reopen', details: `${req.body.status === 'done' ? 'Completed' : 'Reopened'}: ${t.title}${ch.resolution ? ` – ${ch.resolution}` : ''}` });
   res.json({ ok: true });
 });
 
 r.delete('/tasks/:id', requirePerm('tasks.manage'), (req, res) => {
   const t = get('SELECT * FROM tasks WHERE id=?', Number(req.params.id));
   if (!t) throw httpError(404, 'Not found');
+  if (t.source === 'lien_payment') throw httpError(400, 'Lien payment alerts cannot be deleted – resolve them instead');
   assertFacility(req, t.facility_id);
   run('DELETE FROM tasks WHERE id=?', t.id);
   res.json({ ok: true });

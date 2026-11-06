@@ -48,7 +48,7 @@ The first launch creates the database (`data/storage.db`) and generates demo dat
 
 **Development mode** (hot reload): `npm run dev`, then open http://localhost:5173.
 
-**Automated tests:** `npm test` runs 36 engine and API tests on a throwaway database. They cover billing math, the lien cycle, permissions, facility isolation and every workflow.
+**Automated tests:** `npm test` runs 38 engine and API tests on a throwaway database. They cover billing math, the lien cycle, permissions, facility isolation and every workflow.
 
 ---|---|---|
 | Admin | admin@demo.com | Everything, all facilities |
@@ -73,8 +73,8 @@ The first launch creates the database (`data/storage.db`) and generates the demo
 - Lien progress tracker with a button to complete the next step
 - Gate code management, notes and history timeline, communications, lien history, purchases
 - Edit info, log a call, send a message, move out
-- **Account notes:** a note box at the top of every account for jotting down what a conversation was about. After saving, the author has **30 seconds to Undo**, which removes the note and puts its text back in the box for editing. After that the note is permanent. Undos are recorded in the Activity Log.
-- **"Leave without a note?" reminder:** when switched on for a facility, anyone leaving a tenant's account without adding a note (or logging a call) during that visit is asked *"Are you sure you wish to leave the tenant's account without making a note?"* (Yes / No). Higher-ups switch it on or off in **Settings → Facility → Account note reminder**, per facility or for all of their facilities at once. It's controlled by the *Turn the "leave account without a note" reminder on/off* permission, which Admin, District Manager and Area Manager have by default. It is on in the demo data.
+- **Account notes:** a note box at the top of every account for jotting down what a conversation was about. After saving, the author has **30 seconds to Undo**, which removes the note and puts its text back in the box for editing. An undone note leaves no trace. After 30 seconds the note is permanent: nobody can edit or delete it, so a correction has to be a new note.
+- **"Leave without a note?" reminder, set per staff level:** for each facility, managers choose which levels (Assistant Manager, Property Manager, Area Manager, District Manager, Admin) are asked *"Are you sure you wish to leave the tenant's account without making a note?"* (Yes / No) when leaving an account without adding a note or logging a call during that visit. This is in **Settings → Facility → Account note reminder**. You can set your own level and the levels below you, per facility or for all of your facilities at once. Controlled by a permission that Admin, District Manager and Area Manager have by default.
 
 **Guided move-in.** Five steps: choose unit, tenant (new or existing), terms (rent, promotion, protection plan, gate code), lease (agreement and on-screen signature), then payment. Proration follows facility billing settings. It automatically creates the gate code, sends a welcome email and converts the lead.
 
@@ -82,7 +82,7 @@ The first launch creates the database (`data/storage.db`) and generates the demo
 
 **Units and site map.** Interactive, color-coded map: current, past due 1–29 days, past due 30+ days, vacant, reserved, unrentable, and overlocked. Supports zoom and highlighting by unit type. Clicking a unit opens a side panel with tenant, balance and actions (move in, overlock, rate, unrentable).
 
-**Walkthrough / lock check.** Printable list of every unit with tenant (blank if vacant), balance, past-due status, lien stage and overlock status. Units that need an overlock, or need one removed, are flagged.
+**Walkthrough / lock check.** Prints in **unit order** (natural alphanumeric: A2 before A10) or the property manager's own **walk-through order**. The *Set Walk Order* tool arranges buildings, sets each building's direction or snakes between them, and lets you drag or renumber individual stops. It's a printable list of every unit with tenant (blank if vacant), balance, past-due status, lien stage and overlock status. Units that need an overlock, or need one removed, are flagged.
 
 **Gate access.** Every tenant gets a code. Access is denied automatically at *X* days past due (set per facility) and restored automatically when the tenant pays. Includes per-tenant overrides (always allow / always deny), a gate activity log, a keypad simulator and sync to the gate system.
 
@@ -107,7 +107,17 @@ The first launch creates the database (`data/storage.db`) and generates the demo
 - Rent increases for existing customers: a candidate finder (tenure, gap below street rate, current on payments), bulk scheduling with notice letters, and automatic application on the effective date.
 - Promotions.
 
-**Reminders.** Assigned to-dos with due dates and priority, plus automatic reminders: lead follow-ups, expiring reservations, auctions, rent increases, reorder alerts, unfinished daily closes, and overlocks to place or remove.
+**Reminders & Tasks** (second item in the menu, with a red count badge and a bell in the top bar). Pinned to the top of the dashboard.
+
+**Lien payment alerts.** When a payment is taken from a tenant at or past a chosen lien step (set per facility in *Settings → Fees & Lien Schedule*; Pre-Lien by default, autopay included):
+
+- the person taking the payment sees a warning immediately
+- a red banner appears on every page for everyone at that facility
+- an urgent alert with a follow-up checklist goes to the top of Reminders and the dashboard
+
+Alerts can't be deleted or edited. They must be **resolved with a written note** of what was done, which is kept with the alert and in the Activity Log.
+
+**Reminders** also include assigned to-dos with due dates and priority, plus automatic reminders: lead follow-ups, expiring reservations, auctions, rent increases, reorder alerts, unfinished daily closes, and overlocks to place or remove.
 
 **Property audits.** The district or area manager checks off each facility's monthly visit and scores a 0–5 checklist (editable per facility). They can add item notes, a summary note for the property manager, photos, and follow-up reminders assigned to staff. The property manager responds and acknowledges. Score trends are charted and the portfolio view shows visit status.
 

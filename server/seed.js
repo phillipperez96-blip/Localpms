@@ -2,7 +2,7 @@
 // past dues at every lien stage, leads, merchandise, audits, reminders and more.
 import { all, get, run, insert, update, tx, resetDatabase, setState } from './db.js';
 import { hashPassword } from './auth.js';
-import { processFacility, postLedger, logActivity, generateGateCode, sendTemplate } from './core.js';
+import { processFacility, postLedger, logActivity, generateGateCode, sendTemplate, lienPaymentAlert, tenantAccount } from './core.js';
 import { today, addDays, addMonths, diffDays, round2, toISO, parse, DEFAULT_LATE_FEES, DEFAULT_LIEN_STEPS, DEFAULT_AUDIT_TEMPLATE, DEFAULT_ROLES, DEFAULT_TEMPLATES } from './util.js';
 
 let seed = 42;
@@ -59,7 +59,7 @@ export async function seedDatabase() {
     const fid = insert('facilities', {
       name: F.name, code: F.code, address: F.address, city: F.city, state: F.state, zip: F.zip, phone: F.phone, email: F.email,
       office_hours: 'Mon–Fri 9:30am–6pm, Sat 9am–5pm, Sun Closed', gate_hours: '6:00am – 10:00pm daily',
-      billing_type: F.billing_type, prorate: 1, tax_rate: 0.0825, admin_fee: 25, deposit: 0, gate_deny_days: 6, lien_automation: 'auto', reservation_days: 7, note_reminder: 1,
+      billing_type: F.billing_type, prorate: 1, tax_rate: 0.0825, admin_fee: 25, deposit: 0, gate_deny_days: 6, lien_automation: 'auto', reservation_days: 7, lien_alert_step: 'pre_lien',
       late_fees: DEFAULT_LATE_FEES, lien_steps: DEFAULT_LIEN_STEPS, audit_template: DEFAULT_AUDIT_TEMPLATE,
     });
     facIds.push(fid);
@@ -67,6 +67,9 @@ export async function seedDatabase() {
     insert('promotions', { facility_id: fid, name: '50% Off First Month', description: 'Half off first month rent', discount_type: 'percent', value: 50, months: 1 });
     insert('promotions', { facility_id: fid, name: '$20 Off 3 Months', description: '$20 off monthly rent for 3 months', discount_type: 'amount_off', value: 20, months: 3 });
   }
+
+  // demo: the "leave without a note" reminder applies to every staff level
+  run('UPDATE facilities SET note_reminder_roles=?', JSON.stringify(Object.values(roleIds)));
 
   const users = [
     ['Alex Morgan', 'admin@demo.com', 'admin', '*'], ['Jordan Lee', 'dm@demo.com', 'dm', '*'], ['Casey Rivera', 'am@demo.com', 'am', [facIds[0], facIds[1]]],
@@ -225,6 +228,19 @@ export async function seedDatabase() {
     const stats = await processFacility(fid, T, { deliver: false });
     console.log(`  ${F.name}: lien steps ${stats.lienSteps}, late fees ${stats.lateFees}`);
 
+    // demo: a partial payment from a tenant in lien status raises an urgent alert
+    if (fi === 0) {
+      const r0 = get("SELECT r.tenant_id FROM rentals r WHERE r.facility_id=? AND r.status='active' AND r.lien_status IN ('lien','advertise','pre_lien') ORDER BY r.id LIMIT 1", fid);
+      if (r0) {
+        const tenant = get('SELECT * FROM tenants WHERE id=?', r0.tenant_id);
+        const before = all("SELECT r.*, u.number FROM rentals r JOIN units u ON u.id=r.unit_id WHERE r.tenant_id=? AND r.status='active'", tenant.id);
+        const b0 = tenantAccount(tenant.id).balance;
+        const amt = round2(Math.min(100, b0 / 2));
+        postLedger({ facility_id: fid, tenant_id: tenant.id, date: T, type: 'payment', category: 'payment', description: 'Payment', amount: amt, method: 'cash', user_id: uid['asst@demo.com'] });
+        lienPaymentAlert({ tenant, before, amount: amt, method: 'cash', balanceBefore: b0, balanceAfter: round2(b0 - amt), user_id: uid['asst@demo.com'] });
+      }
+    }
+
     // overlocked unit that has since paid (shows up on "remove overlock" list)
     const paidOver = get(`SELECT r.unit_id FROM rentals r WHERE r.facility_id=? AND r.status='active' AND r.lien_status='current' ORDER BY r.id DESC LIMIT 1`, fid);
     if (paidOver) update('units', paidOver.unit_id, { overlocked: 1 });
@@ -346,6 +362,15 @@ export async function seedDatabase() {
       // activity
       logActivity({ facility_id: fid, user_id: uid['admin@demo.com'], entity_type: 'system', action: 'seed', details: 'Demo data generated' });
     });
+    // demo walkthrough route set by the property manager: office building first, then the rest
+    // in reverse, snaking back and forth so the walk never doubles back
+    {
+      const bs = [...new Set(all('SELECT building FROM units WHERE facility_id=? ORDER BY building', fid).map((x) => x.building))];
+      let k = 1;
+      [bs[0], ...bs.slice(1).reverse()].forEach((b, i) => {
+        for (const u of all(`SELECT id FROM units WHERE facility_id=? AND building=? ORDER BY number ${i % 2 ? 'DESC' : 'ASC'}`, fid, b)) run('UPDATE units SET walk_order=? WHERE id=?', k++, u.id);
+      });
+    }
     // a few welcome messages for recent move-ins
     for (const t of all("SELECT t.id FROM tenants t JOIN rentals r ON r.tenant_id=t.id WHERE t.facility_id=? AND r.move_in_date>=? LIMIT 8", fid, addDays(T, -20)))
       await sendTemplate('welcome', { tenant_id: t.id, facility_id: fid, user_id: pm, deliver: false });

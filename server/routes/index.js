@@ -42,9 +42,19 @@ r.use(requireAuth);
 r.post('/auth/logout', (req, res) => { run('DELETE FROM sessions WHERE token=?', req.token); res.json({ ok: true }); });
 
 r.get('/me', (req, res) => {
-  const facilities = all(`SELECT id, name, code, city, state, billing_type, tax_rate, admin_fee, gate_deny_days, reservation_days, note_reminder FROM facilities WHERE id IN ${inList(req.user.facility_ids)} ORDER BY id`, ...req.user.facility_ids);
+  const facilities = all(`SELECT id, name, code, city, state, billing_type, tax_rate, admin_fee, gate_deny_days, reservation_days, note_reminder_roles, lien_alert_step FROM facilities WHERE id IN ${inList(req.user.facility_ids)} ORDER BY id`, ...req.user.facility_ids);
   const integ = integrationStatus();
-  res.json({ user: req.user, facilities, permissions: PERMISSIONS, noteUndoSeconds: NOTE_UNDO_SECONDS, integrations: { stripePublishableKey: integ.payments.publishableKey, payments: integ.payments.connected, email: integ.email.connected, sms: integ.sms.connected, gate: integ.gate.connected } });
+  res.json({ user: req.user, facilities: facilities.map((f) => ({ ...f, note_reminder_roles: JSON.parse(f.note_reminder_roles || '[]') })), roles: all('SELECT id, name, slug, rank FROM roles ORDER BY rank DESC'), permissions: PERMISSIONS, noteUndoSeconds: NOTE_UNDO_SECONDS, integrations: { stripePublishableKey: integ.payments.publishableKey, payments: integ.payments.connected, email: integ.email.connected, sms: integ.sms.connected, gate: integ.gate.connected } });
+});
+
+// Urgent items shown in the red banner and the Reminders badge on every page.
+r.get('/alerts', (req, res) => {
+  const ids = scope(req);
+  const lienPayments = all(`SELECT t.*, f.code facility_code, u.name creator, tn.first_name tenant_first, tn.last_name tenant_last FROM tasks t JOIN facilities f ON f.id=t.facility_id
+    LEFT JOIN users u ON u.id=t.created_by LEFT JOIN tenants tn ON tn.id=t.tenant_id WHERE t.facility_id IN ${inList(ids)} AND t.source='lien_payment' AND t.status='open' ORDER BY t.id DESC`, ...ids);
+  const today = new Date(); const T = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const due = get(`SELECT COUNT(*) c FROM tasks WHERE facility_id IN ${inList(ids)} AND status='open' AND source!='lien_payment' AND (due_date<=? OR priority IN ('high','urgent'))`, ...ids, T).c;
+  res.json({ lienPayments, dueCount: due, total: due + lienPayments.length });
 });
 
 r.get('/search', (req, res) => {

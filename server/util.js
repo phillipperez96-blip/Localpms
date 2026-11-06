@@ -61,6 +61,7 @@ export const PERMISSIONS = [
   ['units.view', 'Units', 'View units & site map'],
   ['units.manage', 'Units', 'Add / edit units, set unrentable'],
   ['walkthrough.view', 'Units', 'Print walkthrough / lock check'],
+  ['walkthrough.order', 'Units', 'Set the walkthrough (walking route) order'],
   ['gate.manage', 'Units', 'Manage gate access codes'],
   ['pastdue.manage', 'Collections', 'Manage past dues & lien steps'],
   ['auctions.manage', 'Collections', 'Manage auctions'],
@@ -77,12 +78,15 @@ export const PERMISSIONS = [
   ['audits.respond', 'Audits', 'Respond to / acknowledge audits'],
   ['activity.view', 'Admin', 'View activity log'],
   ['settings.facility', 'Admin', 'Edit facility settings, fees & lien schedule'],
-  ['settings.note_reminder', 'Admin', 'Turn the "leave account without a note" reminder on/off'],
+  ['settings.note_reminder', 'Admin', 'Choose which staff levels get the "leave account without a note" reminder'],
   ['settings.users', 'Admin', 'Manage users'],
   ['settings.roles', 'Admin', 'Manage roles & permissions'],
   ['settings.integrations', 'Admin', 'Manage integrations & system tools'],
 ];
 export const ALL_PERMS = PERMISSIONS.map((p) => p[0]);
+
+/** Which roles a facility's "leave without a note" reminder applies to. */
+export const noteReminderRoles = (f) => jparse(f?.note_reminder_roles, []);
 
 /** How long (seconds) the author of a tenant note can undo it. */
 export const NOTE_UNDO_SECONDS = Number(process.env.NOTE_UNDO_SECONDS) || 30;

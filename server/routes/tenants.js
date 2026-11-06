@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { all, get, run, insert, update, tx } from '../db.js';
 import { scope, requirePerm, assertFacility, can } from '../auth.js';
-import { today, round2, money, addDays, NOTE_UNDO_SECONDS } from '../util.js';
+import { today, round2, money, addDays, NOTE_UNDO_SECONDS, noteReminderRoles } from '../util.js';
 import { inList, httpError, facilityConfig, nextLienStep, fullName } from './helpers.js';
-import { facilityAccounts, tenantAccount, gateState, postLedger, logActivity, firstPeriod, applyPromo, generateGateCode, sendTemplate, EMPTY_ACCT } from '../core.js';
+import { facilityAccounts, tenantAccount, gateState, postLedger, logActivity, firstPeriod, applyPromo, generateGateCode, sendTemplate, EMPTY_ACCT, lienPaymentAlert } from '../core.js';
 import { chargeCard, refundCard, gateSetAccess } from '../services/integrations.js';
 
 const r = Router();
@@ -60,7 +60,7 @@ r.get('/tenants/:id', requirePerm('tenants.view'), (req, res) => {
   const ledger = ledgerRows.map((l) => { if (!l.voided) bal += l.type === 'charge' || l.type === 'refund' ? l.amount : -l.amount; return { ...l, running: round2(bal) }; }).reverse();
   const active = rentals.filter((x) => x.status === 'active');
   res.json({
-    tenant: t, facility: { id: f.id, name: f.name, note_reminder: !!f.note_reminder, gate_deny_days: f.gate_deny_days, lien_steps: f.lien_steps, tax_rate: f.tax_rate, billing_type: f.billing_type },
+    tenant: t, facility: { id: f.id, name: f.name, note_reminder: noteReminderRoles(f).includes(req.user.role_id), gate_deny_days: f.gate_deny_days, lien_steps: f.lien_steps, tax_rate: f.tax_rate, billing_type: f.billing_type },
     account: acct, gate: gateState(t, acct, f, active.length > 0), rentals, ledger,
     communications: all('SELECT c.*, u.name user_name FROM communications c LEFT JOIN users u ON u.id=c.user_id WHERE tenant_id=? ORDER BY c.id DESC', t.id),
     lienEvents: all('SELECT e.*, u.name user_name, un.number unit FROM lien_events e LEFT JOIN users u ON u.id=e.user_id LEFT JOIN rentals r ON r.id=e.rental_id LEFT JOIN units un ON un.id=r.unit_id WHERE e.tenant_id=? ORDER BY e.id DESC', t.id),
@@ -83,7 +83,9 @@ r.put('/tenants/:id', requirePerm('tenants.edit'), (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- account notes (author can undo for NOTE_UNDO_SECONDS, then permanent) ----------
+// ---------- account notes ----------
+// The author can undo a note for NOTE_UNDO_SECONDS (clean removal, no trace). After that the note is
+// permanent: there is deliberately no edit or delete route for anyone.
 const UNDO_GRACE_MS = 5000; // allowance for network delay; the screen shows the exact window
 const noteView = (req) => (n) => {
   const remaining = n.user_id === req.user.id ? Math.max(0, Math.ceil((n.created_ms + NOTE_UNDO_SECONDS * 1000 - Date.now()) / 1000)) : 0;
@@ -96,7 +98,6 @@ r.post('/tenants/:id/notes', requirePerm('tenants.view'), (req, res) => {
   if (!body) throw httpError(400, 'Note is empty');
   if (body.length > 5000) throw httpError(400, 'Note is too long (5,000 characters max)');
   const id = insert('tenant_notes', { facility_id: t.facility_id, tenant_id: t.id, user_id: req.user.id, body, created_ms: Date.now() });
-  logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: 'tenant', entity_id: t.id, action: 'note', details: body });
   const n = get('SELECT n.*, u.name user_name FROM tenant_notes n LEFT JOIN users u ON u.id=n.user_id WHERE n.id=?', id);
   res.json({ note: noteView(req)(n), undo_seconds: NOTE_UNDO_SECONDS });
 });
@@ -107,8 +108,7 @@ r.delete('/tenants/:id/notes/:noteId', requirePerm('tenants.view'), (req, res) =
   if (!n) throw httpError(404, 'Note not found');
   if (n.user_id !== req.user.id) throw httpError(403, 'Only the person who wrote a note can undo it');
   if (Date.now() - n.created_ms > NOTE_UNDO_SECONDS * 1000 + UNDO_GRACE_MS) throw httpError(400, `The ${NOTE_UNDO_SECONDS}-second undo window has passed – this note is now permanent`);
-  run('DELETE FROM tenant_notes WHERE id=?', n.id);
-  logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: 'tenant', entity_id: t.id, action: 'note_undo', details: `Note withdrawn within the undo window: "${n.body.slice(0, 120)}"` });
+  run('DELETE FROM tenant_notes WHERE id=?', n.id); // a clean take-back: nothing is kept once undone
   res.json({ ok: true, body: n.body });
 });
 
@@ -148,8 +148,10 @@ r.post('/tenants/:id/payments', requirePerm('payments.take'), async (req, res) =
     ref = ch.reference + (last4 ? ` (•••• ${last4})` : '');
   }
   const before = tenantAccount(t.id);
+  const rentalsBefore = all("SELECT r.*, u.number FROM rentals r JOIN units u ON u.id=r.unit_id WHERE r.tenant_id=? AND r.status='active'", t.id);
   const id = postLedger({ facility_id: t.facility_id, tenant_id: t.id, rental_id: get("SELECT id FROM rentals WHERE tenant_id=? AND status='active' ORDER BY id LIMIT 1", t.id)?.id, type: 'payment', category: 'payment', description: notes ? `Payment – ${notes}` : 'Payment', amount, method, reference: ref, user_id: req.user.id });
   const after = tenantAccount(t.id);
+  const lienAlert = lienPaymentAlert({ tenant: t, before: rentalsBefore, amount, method, balanceBefore: before.balance, balanceAfter: after.balance, user_id: req.user.id });
   logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: 'tenant', entity_id: t.id, action: 'payment', details: `Payment ${money(amount)} (${method}) – balance ${money(before.balance)} → ${money(after.balance)}` });
   // paid in full: clear lien status, restore gate
   if (after.balance <= 0 || after.daysLate === 0) {
@@ -166,7 +168,7 @@ r.post('/tenants/:id/payments', requirePerm('payments.take'), async (req, res) =
     for (const a of all("SELECT id FROM auctions WHERE tenant_id=? AND status='scheduled'", t.id)) update('auctions', a.id, { status: 'redeemed', notes: `Tenant paid in full ${today()}` });
   }
   if (req.body.sendReceipt) await sendTemplate('payment_receipt', { tenant_id: t.id, facility_id: t.facility_id, user_id: req.user.id });
-  res.json({ id, reference: ref, account: after });
+  res.json({ id, reference: ref, account: after, lienAlert });
 });
 
 r.post('/tenants/:id/adjustments', requirePerm('ledger.adjust'), (req, res) => {

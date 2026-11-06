@@ -142,6 +142,38 @@ export async function sendTemplate(key, { tenant_id, lead_id, facility_id, user_
   return sendCommunication({ facility_id, tenant_id, lead_id, channel: channel || tpl.channel, subject: renderTemplate(tpl.subject, ctx), body: renderTemplate(tpl.body, ctx), template_key: key, user_id, deliver, created_at });
 }
 
+// ---------- lien payment alerts ----------
+export const LIEN_ALERT_STEPS = [
+  'Confirm whether a partial payment can be accepted under your state lien law (it may waive the right to sell)',
+  'Stop or postpone the sale / cancel the auction listing if the balance is paid',
+  'Remove the overlock once paid in full and verify gate access is restored',
+  'Withdraw any newspaper / online sale advertisement',
+  'Call the tenant to confirm the remaining balance and next due date',
+  'Notify the district manager',
+];
+
+/**
+ * When a payment is received from a tenant at or past the facility's alert stage of the lien
+ * process, create an urgent reminder so the office can act immediately. `before` is the
+ * tenant's active rentals (with lien_status) captured BEFORE the payment was posted.
+ */
+export function lienPaymentAlert({ tenant, before, amount, method, balanceBefore, balanceAfter, user_id, source = 'Payment' }) {
+  const f = facilityConfig(tenant.facility_id);
+  const keys = f.lien_steps.map((s) => s.key);
+  const threshold = f.lien_alert_step === 'any' ? 0 : Math.max(0, keys.indexOf(f.lien_alert_step || 'pre_lien'));
+  const hit = before.filter((r) => keys.indexOf(r.lien_status) >= threshold && r.lien_status !== 'current');
+  if (!hit.length) return null;
+  const stage = hit.map((r) => `${r.number}: ${f.lien_steps.find((s) => s.key === r.lien_status)?.name || r.lien_status}`).join(', ');
+  const name = `${tenant.first_name} ${tenant.last_name}`;
+  const id = insert('tasks', {
+    facility_id: tenant.facility_id, title: `Lien payment received: ${name} paid ${money(amount)}`,
+    description: `${source} of ${money(amount)} (${method || '—'}) taken from a tenant in lien status (${stage}). Balance ${money(balanceBefore)} → ${money(balanceAfter)}${balanceAfter > 0 ? ' – still owes a balance.' : ' – paid in full.'}`,
+    due_date: today(), priority: 'urgent', category: 'Lien Payment', source: 'lien_payment', status: 'open', tenant_id: tenant.id, unit_id: hit[0].unit_id, created_by: user_id,
+  });
+  logActivity({ facility_id: tenant.facility_id, user_id, entity_type: 'tenant', entity_id: tenant.id, action: 'lien_payment_alert', details: `Lien payment alert raised: ${money(amount)} while ${stage}` });
+  return { id, stage, steps: LIEN_ALERT_STEPS, paidInFull: balanceAfter <= 0 };
+}
+
 // ---------- lien process ----------
 export async function completeLienStep({ rental, step, cycle, date = today(), auto = false, user_id = null, notes = null, deliver = true }) {
   const f = get('SELECT * FROM facilities WHERE id=?', rental.facility_id);
@@ -204,7 +236,12 @@ export async function processFacility(facilityId, asOf = today(), { deliver = tr
     const dueToday = get("SELECT 1 x FROM ledger WHERE tenant_id=? AND type='charge' AND category='rent' AND date=? AND voided=0", t.id, asOf);
     if (dueToday && a.balance > 0) {
       const res = await integ.chargeCard({ amount: a.balance, description: 'Autopay' }).catch(() => null);
-      if (res?.ok) postLedger({ facility_id: f.id, tenant_id: t.id, date: asOf, type: 'payment', category: 'payment', description: 'Autopay', amount: a.balance, method: 'card', reference: res.reference });
+      if (res?.ok) {
+        const tenant = get('SELECT * FROM tenants WHERE id=?', t.id);
+        const before = all("SELECT r.*, u.number FROM rentals r JOIN units u ON u.id=r.unit_id WHERE r.tenant_id=? AND r.status='active'", t.id);
+        postLedger({ facility_id: f.id, tenant_id: t.id, date: asOf, type: 'payment', category: 'payment', description: 'Autopay', amount: a.balance, method: 'card', reference: res.reference });
+        lienPaymentAlert({ tenant, before, amount: a.balance, method: 'card (autopay)', balanceBefore: a.balance, balanceAfter: 0, source: 'Autopay charge' });
+      }
     }
   }
 

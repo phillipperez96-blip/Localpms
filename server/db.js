@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS facilities (
   phone TEXT, email TEXT, office_hours TEXT, gate_hours TEXT,
   billing_type TEXT DEFAULT 'anniversary', prorate INTEGER DEFAULT 1, tax_rate REAL DEFAULT 0.0825,
   admin_fee REAL DEFAULT 25, deposit REAL DEFAULT 0, gate_deny_days INTEGER DEFAULT 6,
-  lien_automation TEXT DEFAULT 'auto', reservation_days INTEGER DEFAULT 7, note_reminder INTEGER DEFAULT 0,
+  lien_automation TEXT DEFAULT 'auto', reservation_days INTEGER DEFAULT 7, note_reminder INTEGER DEFAULT 0, note_reminder_roles TEXT DEFAULT '[]', lien_alert_step TEXT DEFAULT 'pre_lien',
   late_fees TEXT, lien_steps TEXT, audit_template TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS roles (
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS units (
   id INTEGER PRIMARY KEY, facility_id INTEGER NOT NULL REFERENCES facilities(id), number TEXT NOT NULL,
   building TEXT, unit_type TEXT, width REAL, length REAL, sqft REAL, floor INTEGER DEFAULT 1, door_type TEXT,
   street_rate REAL, status TEXT DEFAULT 'vacant', overlocked INTEGER DEFAULT 0, unrentable_reason TEXT,
-  features TEXT, map_x REAL, map_y REAL, map_w REAL, map_h REAL, notes TEXT,
+  features TEXT, map_x REAL, map_y REAL, map_w REAL, map_h REAL, notes TEXT, walk_order INTEGER,
   UNIQUE(facility_id, number)
 );
 CREATE TABLE IF NOT EXISTS tenants (
@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS rate_history (
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY, facility_id INTEGER, title TEXT, description TEXT, due_date TEXT,
   priority TEXT DEFAULT 'normal', status TEXT DEFAULT 'open', category TEXT, assigned_to INTEGER,
-  created_by INTEGER, source TEXT DEFAULT 'manual', audit_id INTEGER, tenant_id INTEGER, unit_id INTEGER,
+  created_by INTEGER, source TEXT DEFAULT 'manual', audit_id INTEGER, tenant_id INTEGER, unit_id INTEGER, resolution TEXT,
   completed_at TEXT, completed_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS audits (
@@ -180,6 +180,23 @@ export function migrate() {
       SELECT facility_id, entity_id, user_id, details, CAST((julianday(created_at) - 2440587.5) * 86400000 AS INTEGER), created_at
       FROM activity_log WHERE entity_type='tenant' AND action='note' AND entity_id IS NOT NULL`);
     db.exec("INSERT INTO system_state(key,value) VALUES('notes_migrated','1')");
+  }
+  if (!cols('facilities').includes('note_reminder_roles')) {
+    db.exec("ALTER TABLE facilities ADD COLUMN note_reminder_roles TEXT DEFAULT '[]'");
+    // carry over the old on/off switch: "on" meant every role
+    const ids = JSON.stringify(db.prepare('SELECT id FROM roles').all().map((r) => r.id));
+    db.prepare('UPDATE facilities SET note_reminder_roles=? WHERE note_reminder=1').run(ids);
+  }
+  if (!cols('facilities').includes('lien_alert_step')) db.exec("ALTER TABLE facilities ADD COLUMN lien_alert_step TEXT DEFAULT 'pre_lien'");
+  if (!cols('units').includes('walk_order')) db.exec('ALTER TABLE units ADD COLUMN walk_order INTEGER');
+  if (!cols('tasks').includes('resolution')) db.exec('ALTER TABLE tasks ADD COLUMN resolution TEXT');
+  // grant the walkthrough-order permission to manager roles on older databases
+  if (!db.prepare("SELECT 1 x FROM system_state WHERE key='perm_walk_order'").get()) {
+    for (const r of db.prepare("SELECT id, permissions FROM roles WHERE slug IN ('admin','dm','am','pm')").all()) {
+      const perms = JSON.parse(r.permissions || '[]');
+      if (!perms.includes('walkthrough.order')) { perms.push('walkthrough.order'); db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify(perms), r.id); }
+    }
+    db.exec("INSERT INTO system_state(key,value) VALUES('perm_walk_order','1')");
   }
   // grant the note-reminder permission to senior roles on databases created before it existed
   if (!db.prepare("SELECT 1 x FROM system_state WHERE key='perm_note_reminder'").get()) {

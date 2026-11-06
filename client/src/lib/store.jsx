@@ -37,9 +37,19 @@ export function AppProvider({ children }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), type === 'error' ? 6000 : 3500);
   }, []);
   const fac = (path) => withFac(path, facility);
+
+  // urgent alerts (lien payments) + due reminders, refreshed every 30 s and on demand
+  const [alerts, setAlerts] = useState({ lienPayments: [], dueCount: 0, total: 0 });
+  const refreshAlerts = useCallback(() => { if (getToken() && facility) api.get(withFac('/alerts', facility)).then(setAlerts).catch(() => {}); }, [facility]);
+  useEffect(() => {
+    if (!me) return;
+    refreshAlerts();
+    const i = setInterval(refreshAlerts, 30000);
+    return () => clearInterval(i);
+  }, [me, refreshAlerts]);
   const facilityObj = me?.facilities.find((f) => String(f.id) === String(facility)) || null;
 
-  return <Ctx.Provider value={{ me, user: me?.user, facilities: me?.facilities || [], facility, facilityObj, setFacility, login, logout, can, loading, toast, toasts, fac, reloadMe: load }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ me, user: me?.user, facilities: me?.facilities || [], facility, facilityObj, setFacility, login, logout, can, loading, toast, toasts, fac, reloadMe: load, alerts, refreshAlerts }}>{children}</Ctx.Provider>;
 }
 
 export const useApp = () => useContext(Ctx);

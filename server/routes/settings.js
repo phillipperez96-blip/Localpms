@@ -15,7 +15,7 @@ r.get('/settings/facility/:id', requirePerm('settings.facility'), (req, res) => 
   res.json({ ...f, audit_template: f.audit_template || DEFAULT_AUDIT_TEMPLATE });
 });
 
-const FF = ['name', 'code', 'address', 'city', 'state', 'zip', 'phone', 'email', 'office_hours', 'gate_hours', 'billing_type', 'prorate', 'tax_rate', 'admin_fee', 'deposit', 'gate_deny_days', 'lien_automation', 'reservation_days', 'late_fees', 'lien_steps', 'audit_template'];
+const FF = ['name', 'code', 'address', 'city', 'state', 'zip', 'phone', 'email', 'office_hours', 'gate_hours', 'billing_type', 'prorate', 'tax_rate', 'admin_fee', 'deposit', 'gate_deny_days', 'lien_automation', 'reservation_days', 'late_fees', 'lien_steps', 'audit_template', 'lien_alert_step'];
 r.put('/settings/facility/:id', requirePerm('settings.facility'), (req, res) => {
   const id = Number(req.params.id);
   assertFacility(req, id);
@@ -32,24 +32,42 @@ r.put('/settings/facility/:id', requirePerm('settings.facility'), (req, res) => 
   if (b.late_fees) b.late_fees = [...b.late_fees].sort((a, c) => a.day - c.day);
   const ch = Object.fromEntries(FF.filter((k) => b[k] !== undefined).map((k) => [k, b[k]]));
   update('facilities', id, ch);
-  if (b.note_reminder !== undefined) setNoteReminder(req, [id], b.note_reminder);
+  if (b.note_reminder_roles !== undefined) setNoteReminder(req, [id], b.note_reminder_roles);
   logActivity({ facility_id: id, user_id: req.user.id, entity_type: 'settings', entity_id: id, action: 'update', details: `Facility settings updated (${Object.keys(ch).join(', ')})` });
   res.json({ ok: true });
 });
 
-function setNoteReminder(req, ids, on) {
+/**
+ * Choose which staff levels get the "leave without a note" reminder. A user may only switch it
+ * on or off for their own level and the levels below them; higher levels are left as they were.
+ */
+function setNoteReminder(req, ids, roleIds) {
   if (!req.user.permissions.includes('settings.note_reminder')) throw httpError(403, 'You do not have permission to change the note reminder');
+  if (!Array.isArray(roleIds)) throw httpError(400, 'role_ids must be a list');
+  const roles = all('SELECT id, name, rank FROM roles');
+  const mine = myRank(req);
+  const wanted = new Set(roleIds.map(Number));
+  for (const id of ids) assertFacility(req, id);
+  // Higher levels are always left as they are. Listing one that is already on is fine (the screen
+  // sends the full list); trying to switch one on is refused.
   for (const id of ids) {
-    assertFacility(req, id);
-    update('facilities', id, { note_reminder: on ? 1 : 0 });
-    logActivity({ facility_id: id, user_id: req.user.id, entity_type: 'settings', entity_id: id, action: 'note_reminder', details: `"Leave account without a note" reminder turned ${on ? 'ON' : 'OFF'}` });
+    const current = new Set(jparse(get('SELECT note_reminder_roles FROM facilities WHERE id=?', id).note_reminder_roles, []));
+    for (const r of roles) if (r.rank > mine && wanted.has(r.id) && !current.has(r.id) && ids.length === 1) throw httpError(403, `You cannot set the reminder for ${r.name}`);
+  }
+  for (const id of ids) {
+    const f = get('SELECT note_reminder_roles FROM facilities WHERE id=?', id);
+    const current = new Set(jparse(f.note_reminder_roles, []));
+    const next = roles.filter((r) => (r.rank > mine ? current.has(r.id) : wanted.has(r.id))).map((r) => r.id);
+    update('facilities', id, { note_reminder_roles: next });
+    const names = roles.filter((r) => next.includes(r.id)).map((r) => r.name);
+    logActivity({ facility_id: id, user_id: req.user.id, entity_type: 'settings', entity_id: id, action: 'note_reminder', details: `"Leave account without a note" reminder now applies to: ${names.join(', ') || 'nobody (off)'}` });
   }
 }
 
-/** Toggle the note reminder for one facility or all of the user's facilities. */
+/** Set the note-reminder staff levels for one facility or all of the user's facilities. */
 r.put('/settings/note-reminder', requirePerm('settings.note_reminder'), (req, res) => {
   const ids = req.body.facility_id === 'all' ? req.user.facility_ids : [Number(req.body.facility_id)];
-  setNoteReminder(req, ids, !!req.body.enabled);
+  setNoteReminder(req, ids, req.body.role_ids);
   res.json({ ok: true });
 });
 

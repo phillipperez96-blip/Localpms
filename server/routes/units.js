@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { all, get, insert, update } from '../db.js';
+import { all, get, insert, update, run, tx } from '../db.js';
 import { scope, requirePerm, assertFacility } from '../auth.js';
 import { today, round2 } from '../util.js';
 import { inList, httpError, activeRentals, facilityConfig, fullName } from './helpers.js';
@@ -84,10 +84,25 @@ r.get('/walkthrough', requirePerm('walkthrough.view'), (req, res) => {
       id: u.id, facility_id: u.facility_id, facility_code: u.facility_code, number: u.number, building: u.building, size: u.size, unit_type: u.unit_type, status: u.status,
       tenant: u.rental?.tenant || (u.reservation ? `Reserved: ${u.reservation.name}` : ''), balance: u.rental?.balance ?? 0, daysLate: u.rental?.daysLate ?? 0,
       pastDueStatus: !u.rental ? '' : u.rental.daysLate > 0 && u.rental.balance > 0 ? `${u.rental.daysLate} days` : 'Current',
-      lien_status: u.rental?.lien_status || '', overlocked: !!u.overlocked, action,
+      lien_status: u.rental?.lien_status || '', overlocked: !!u.overlocked, action, walk_order: u.walk_order,
     };
   });
   res.json({ rows, generated: new Date().toISOString(), facilities: ids.map((id) => ({ id, name: facs[id].name })) });
+});
+
+/** Save the property manager's walking route: unit_ids in the order they should be walked. */
+r.put('/walkthrough/order', requirePerm('walkthrough.order'), (req, res) => {
+  const fid = Number(req.body.facility_id);
+  assertFacility(req, fid);
+  const ids = (req.body.unit_ids || []).map(Number);
+  const units = new Set(all('SELECT id FROM units WHERE facility_id=?', fid).map((u) => u.id));
+  if (ids.length !== units.size || ids.some((id) => !units.has(id)) || new Set(ids).size !== ids.length) throw httpError(400, 'The walk order must list each unit of this facility once');
+  tx(() => {
+    run('UPDATE units SET walk_order=NULL WHERE facility_id=?', fid);
+    ids.forEach((id, i) => run('UPDATE units SET walk_order=? WHERE id=?', i + 1, id));
+  });
+  logActivity({ facility_id: fid, user_id: req.user.id, entity_type: 'unit', action: 'walk_order', details: `Walkthrough order updated (${ids.length} units)` });
+  res.json({ ok: true });
 });
 
 // ---------- gate ----------

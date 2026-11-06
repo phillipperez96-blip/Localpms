@@ -4,6 +4,7 @@ import { useApp } from '../lib/store.jsx';
 import { api } from '../lib/api.js';
 import { money } from '../lib/format.js';
 import { Modal, Button, Field, Input, Select, Checkbox, useAction } from './ui.jsx';
+import { LienPaymentWarning } from './LienAlerts.jsx';
 
 export const METHODS = [
   { value: 'cash', label: 'Cash' }, { value: 'check', label: 'Check' }, { value: 'card', label: 'Credit / Debit Card' },
@@ -69,13 +70,18 @@ export function PaymentModal({ open, onClose, tenant, balance, onPaid }) {
   const [receipt, setReceipt] = useState(true);
   const cardRef = useRef();
   const [run, busy] = useAction();
+  const [warn, setWarn] = useState(null);
+  const { refreshAlerts } = useApp();
   useEffect(() => { if (open) { setAmount(balance > 0 ? balance.toFixed(2) : ''); setMethod('cash'); setReference(''); } }, [open, balance]);
   const submit = () => run(async () => {
     const card = method === 'card' ? await cardRef.current.getPayment() : {};
     const r = await api.post(`/tenants/${tenant.id}/payments`, { amount: Number(amount), method, reference, sendReceipt: receipt, ...card });
-    onPaid?.(r); onClose();
+    onPaid?.(r);
+    refreshAlerts();
+    if (r.lienAlert) setWarn(r.lienAlert); else onClose();
     return r;
   }, (r) => `Payment of ${money(amount)} posted. New balance ${money(r.account.balance)}`);
+  if (warn) return <LienPaymentWarning alert={warn} onClose={() => { setWarn(null); onClose(); }} />;
   return (
     <Modal open={open} onClose={onClose} title={`Take Payment – ${tenant?.first_name || ''} ${tenant?.last_name || ''}`}
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button variant="success" icon={CreditCard} loading={busy} onClick={submit} disabled={!(Number(amount) > 0)}>Post {money(amount)}</Button></>}>

@@ -68,6 +68,7 @@ function FacilitySettings() {
         </div>
       </Card>
       <div className="space-y-4">
+        <NoteReminderCard facilityId={facility} roleIds={JSON.parse(f.note_reminder_roles || '[]')} onChange={(ids) => { setF({ ...f, note_reminder_roles: JSON.stringify(ids) }); reloadMe(); }} />
         <Card title="Billing">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Billing cycle"><Select value={f.billing_type} onChange={s('billing_type')} options={[{ value: 'anniversary', label: 'Anniversary (move-in day)' }, { value: 'first', label: '1st of the month' }]} /></Field>
@@ -81,37 +82,44 @@ function FacilitySettings() {
         <Card title="Gate access">
           <Field label="Deny gate access when past due by (days)" hint="Tenants on 'Automatic' are locked out at this many days past due and restored automatically when paid."><Input type="number" min="1" value={f.gate_deny_days} onChange={s('gate_deny_days', true)} /></Field>
         </Card>
-        <NoteReminderCard facilityId={facility} enabled={!!f.note_reminder} onChange={(v) => { setF({ ...f, note_reminder: v ? 1 : 0 }); reloadMe(); }} />
         <Button icon={Save} loading={busy} onClick={save}>Save Facility Settings</Button>
       </div>
     </div>
   );
 }
 
-function NoteReminderCard({ facilityId, enabled, onChange }) {
-  const { can, facilities } = useApp();
+function NoteReminderCard({ facilityId, roleIds, onChange }) {
+  const { can, facilities, me, user } = useApp();
   const [run, busy] = useAction();
+  const [sel, setSel] = useState(roleIds);
+  useEffect(() => setSel(roleIds), [roleIds.join(',')]);
   if (!can('settings.note_reminder')) return null;
-  const set = (facility_id, on) => run(() => api.put('/settings/note-reminder', { facility_id, enabled: on }).then(() => onChange(on)), `Note reminder turned ${on ? 'on' : 'off'}${facility_id === 'all' ? ' for all your facilities' : ''}`);
+  const myRank = me.roles.find((r) => r.id === user.role_id)?.rank ?? 0;
+  const dirty = [...sel].sort().join(',') !== [...roleIds].sort().join(',');
+  const save = (facility_id) => run(() => api.put('/settings/note-reminder', { facility_id, role_ids: sel }).then(() => onChange(sel)),
+    `Note reminder ${sel.length ? 'saved' : 'turned off'}${facility_id === 'all' ? ' for all your facilities' : ''}`);
   return (
-    <Card title="Account note reminder">
-      <label className="flex cursor-pointer items-start gap-3">
-        <button type="button" role="switch" aria-checked={enabled} disabled={busy} onClick={() => set(Number(facilityId), !enabled)}
-          className={cx('relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition', enabled ? 'bg-brand-600' : 'bg-slate-300')}>
-          <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', enabled ? 'left-[22px]' : 'left-0.5')} />
-        </button>
-        <span className="text-sm">
-          <span className="font-medium">Remind staff to leave a note</span>
-          <span className="block text-slate-500">When on, anyone leaving a tenant&rsquo;s account without adding a note (or logging a call) during that visit is asked: &ldquo;Are you sure you wish to leave the tenant&rsquo;s account without making a note?&rdquo;</span>
-        </span>
-      </label>
-      {facilities.length > 1 && (
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3 text-xs">
-          <span className="self-center text-slate-500">All my facilities:</span>
-          <Button size="sm" variant="secondary" loading={busy} onClick={() => set('all', true)}>Turn on everywhere</Button>
-          <Button size="sm" variant="secondary" loading={busy} onClick={() => set('all', false)}>Turn off everywhere</Button>
-        </div>
-      )}
+    <Card title="Account note reminder" subtitle="Staff in the checked roles are asked “Are you sure you wish to leave the tenant’s account without making a note?” if they leave an account without adding a note (or logging a call) during that visit.">
+      <div className="space-y-2">
+        {me.roles.map((r) => {
+          const locked = r.rank > myRank;
+          return (
+            <label key={r.id} className={cx('flex items-center justify-between rounded-md border px-3 py-2 text-sm', locked ? 'border-slate-100 bg-slate-50 text-slate-400' : 'cursor-pointer border-slate-200 hover:bg-slate-50')}>
+              <span>{r.name}{r.id === user.role_id && <span className="ml-1 text-xs text-slate-500">(your level)</span>}{locked && <span className="ml-1 text-xs">– set by a higher level</span>}</span>
+              <button type="button" role="switch" aria-label={`Reminder for ${r.name}`} aria-checked={sel.includes(r.id)} disabled={locked || busy}
+                onClick={() => setSel(sel.includes(r.id) ? sel.filter((x) => x !== r.id) : [...sel, r.id])}
+                className={cx('relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50', sel.includes(r.id) ? 'bg-brand-600' : 'bg-slate-300')}>
+                <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', sel.includes(r.id) ? 'left-[22px]' : 'left-0.5')} />
+              </button>
+            </label>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <Button size="sm" icon={Save} loading={busy} disabled={!dirty} onClick={() => save(Number(facilityId))}>Save for this facility</Button>
+        {facilities.length > 1 && <Button size="sm" variant="secondary" loading={busy} onClick={() => save('all')}>Apply to all my facilities</Button>}
+        {dirty && <span className="text-xs text-amber-700">Unsaved changes</span>}
+      </div>
     </Card>
   );
 }
@@ -124,7 +132,7 @@ function LienSettings() {
   const setFee = (i, ch) => setF({ ...f, late_fees: f.late_fees.map((x, j) => (j === i ? { ...x, ...ch } : x)) });
   const setStep = (i, ch) => setF({ ...f, lien_steps: f.lien_steps.map((x, j) => (j === i ? { ...x, ...ch } : x)) });
   const move = (i, d) => { const a = [...f.lien_steps]; [a[i], a[i + d]] = [a[i + d], a[i]]; setF({ ...f, lien_steps: a }); };
-  const save = () => run(() => api.put(`/settings/facility/${facility}`, { late_fees: f.late_fees, lien_steps: f.lien_steps, lien_automation: f.lien_automation }).then(reload), 'Fee & lien schedule saved');
+  const save = () => run(() => api.put(`/settings/facility/${facility}`, { late_fees: f.late_fees, lien_steps: f.lien_steps, lien_automation: f.lien_automation, lien_alert_step: f.lien_alert_step }).then(reload), 'Fee & lien schedule saved');
   return (
     <div className="space-y-4">
       <Card title="Late fees" subtitle="Assessed once per delinquency when an account reaches the day threshold" actions={<Button size="sm" variant="secondary" icon={Plus} onClick={() => setF({ ...f, late_fees: [...f.late_fees, { day: 10, name: 'Late Fee', type: 'flat', amount: 15 }] })}>Add Fee</Button>}>
@@ -169,6 +177,9 @@ function LienSettings() {
             </div>
           ))}
         </div>
+      </Card>
+      <Card title="Lien payment alerts" subtitle="When a payment is taken from a tenant at or past this step, an urgent alert appears for the office and management (red banner on every page, top of Reminders).">
+        <Field label="Flag payments from tenants at or past" className="max-w-sm"><Select value={f.lien_alert_step || 'pre_lien'} onChange={(e) => setF({ ...f, lien_alert_step: e.target.value })} options={[{ value: 'any', label: 'Any lien step (from the first notice)' }, ...f.lien_steps.map((x) => ({ value: x.key, label: `Day ${x.day}: ${x.name}` }))]} /></Field>
       </Card>
       <Button icon={Save} loading={busy} onClick={save}>Save Fee & Lien Schedule</Button>
     </div>

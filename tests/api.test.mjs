@@ -356,7 +356,7 @@ test('account notes: author can undo within the window, then the note is permane
   assert.ok(!acct.notes.some((n) => n.id === a.note.id), 'undone note is gone');
   assert.ok(!acct.history.some((h) => h.action === 'note' || h.action === 'note_undo'), 'notes are not duplicated in the history list');
   const log = ok(await get('/activity?facility=1&entity=tenant'));
-  assert.ok(log.some((x) => x.action === 'note_undo'), 'undo is recorded in the activity log');
+  assert.ok(!log.some((x) => ['note', 'note_undo'].includes(x.action) || x.details?.includes('Called about balance')), 'an undone note leaves no trace anywhere');
   // someone else cannot undo your note
   const b = ok(await post(`/tenants/${t.id}/notes`, { note: 'Promised to pay Friday' }, 'pm'));
   assert.equal((await call('DELETE', `/tenants/${t.id}/notes/${b.note.id}`, null, 'admin')).status, 403);
@@ -374,16 +374,85 @@ test('account notes: author can undo within the window, then the note is permane
   assert.equal((await post(`/tenants/${other.id}/notes`, { note: 'x' }, 'pm')).status, 403);
 });
 
-test('note reminder setting: only higher-ups can toggle it', async () => {
-  assert.equal(ok(await get('/tenants/1', 'pm')).facility.note_reminder, true, 'demo facilities start with the reminder on');
-  assert.equal((await put('/settings/note-reminder', { facility_id: 1, enabled: false }, 'pm')).status, 403, 'property manager cannot turn it off');
-  assert.equal((await put('/settings/facility/1', { note_reminder: 0 }, 'pm')).status, 403, 'not even through the facility settings form');
-  assert.equal((await put('/settings/note-reminder', { facility_id: 3, enabled: false }, 'am')).status, 403, 'area manager limited to their facilities');
-  ok(await put('/settings/note-reminder', { facility_id: 1, enabled: false }, 'am'));
+test('note reminder: set per staff level, only for your level and below', async () => {
+  const roles = ok(await get('/me')).roles;
+  const id = (slug) => roles.find((r) => r.slug === slug).id;
+  assert.equal(ok(await get('/tenants/1', 'pm')).facility.note_reminder, true, 'demo: reminder on for every level');
+  assert.equal((await put('/settings/note-reminder', { facility_id: 1, role_ids: [] }, 'pm')).status, 403, 'property manager cannot change it');
+  assert.equal((await put('/settings/facility/1', { note_reminder_roles: [] }, 'pm')).status, 403, 'not even through the facility form');
+  // DM: assistants + property managers only
+  ok(await put('/settings/note-reminder', { facility_id: 1, role_ids: [id('asst'), id('pm')] }, 'dm'));
+  assert.equal(ok(await get('/tenants/1', 'pm')).facility.note_reminder, true);
+  assert.equal(ok(await get('/tenants/1', 'asst')).facility.note_reminder, true);
+  assert.equal(ok(await get('/tenants/1', 'am')).facility.note_reminder, false);
+  assert.equal(ok(await get('/tenants/1', 'dm')).facility.note_reminder, false);
+  // the DM's change left the Admin setting alone (it was on)
+  assert.equal(ok(await get('/tenants/1', 'admin')).facility.note_reminder, true, 'higher level untouched');
+  // DM can re-save with Admin still listed (unchanged), but cannot switch Admin off or on
+  ok(await put('/settings/note-reminder', { facility_id: 1, role_ids: [id('admin'), id('asst'), id('pm')] }, 'dm'));
+  ok(await put('/settings/note-reminder', { facility_id: 1, role_ids: [id('pm')] }, 'dm'));
+  assert.equal(ok(await get('/tenants/1', 'admin')).facility.note_reminder, true, 'DM leaving Admin out does not turn Admin off');
+  ok(await put('/settings/note-reminder', { facility_id: 1, role_ids: [id('pm')] }, 'admin'));
+  assert.equal((await put('/settings/note-reminder', { facility_id: 1, role_ids: [id('admin'), id('pm')] }, 'dm')).status, 403, 'DM cannot turn Admin on');
+  assert.equal(ok(await get('/tenants/1', 'admin')).facility.note_reminder, false);
+  // DM can include themselves
+  ok(await put('/settings/note-reminder', { facility_id: 1, role_ids: [id('dm')] }, 'dm'));
+  assert.equal(ok(await get('/tenants/1', 'dm')).facility.note_reminder, true);
   assert.equal(ok(await get('/tenants/1', 'pm')).facility.note_reminder, false);
-  ok(await put('/settings/note-reminder', { facility_id: 'all', enabled: true }, 'dm'));
-  const me = ok(await get('/me', 'dm'));
-  assert.ok(me.facilities.every((f) => f.note_reminder === 1));
-  // PM can still save other facility settings without touching the reminder
-  ok(await put('/settings/facility/1', { gate_deny_days: 6 }, 'pm'));
+  // AM limited to their own facilities; "all" applies everywhere they can reach
+  assert.equal((await put('/settings/note-reminder', { facility_id: 3, role_ids: [] }, 'am')).status, 403);
+  ok(await put('/settings/note-reminder', { facility_id: 'all', role_ids: [id('asst'), id('pm'), id('am')] }, 'am'));
+  const me = ok(await get('/me', 'am'));
+  assert.ok(me.facilities.every((f) => f.note_reminder_roles.includes(id('pm'))));
+  assert.equal((await put('/settings/note-reminder', { facility_id: 1, role_ids: 'x' }, 'dm')).status, 400);
+  ok(await put('/settings/facility/1', { gate_deny_days: 6 }, 'pm'), 'PM can still save other facility settings');
+});
+
+test('lien payment alert: raised when a tenant in lien status pays, resolved with a required note', async () => {
+  const pd = ok(await get('/pastdues?facility=all')).rows;
+  const target = pd.find((r) => ['pre_lien', 'lien', 'advertise', 'auction'].includes(r.lien_status));
+  assert.ok(target, 'a tenant in lien status exists');
+  const before = ok(await get(`/alerts?facility=${target.facility_id}`)).lienPayments.length;
+  const r = ok(await post(`/tenants/${target.tenant_id}/payments`, { amount: 10, method: 'cash' }));
+  assert.ok(r.lienAlert, 'payment response carries the alert for the cashier');
+  assert.ok(r.lienAlert.steps.length > 3);
+  const alerts = ok(await get(`/alerts?facility=${target.facility_id}`));
+  assert.equal(alerts.lienPayments.length, before + 1, 'alert shows up immediately');
+  const alert = alerts.lienPayments.find((a) => a.id === r.lienAlert.id);
+  assert.match(alert.title, /Lien payment received/);
+  assert.equal(alert.priority, 'urgent');
+  // a current tenant's payment raises nothing
+  const cur = ok(await get('/tenants?facility=1')).find((t) => t.status === 'active' && t.daysLate === 0);
+  assert.equal(ok(await post(`/tenants/${cur.id}/payments`, { amount: 5, method: 'cash' })).lienAlert, null);
+  // cannot resolve without describing what was done; cannot delete; cannot edit the wording
+  assert.equal((await put(`/tasks/${alert.id}`, { status: 'done' })).status, 400);
+  assert.equal((await call('DELETE', `/tasks/${alert.id}`)).status, 400);
+  ok(await put(`/tasks/${alert.id}`, { title: 'changed' }));
+  assert.match(ok(await get(`/alerts?facility=${target.facility_id}`)).lienPayments.find((a) => a.id === alert.id).title, /Lien payment received/);
+  ok(await put(`/tasks/${alert.id}`, { status: 'done', resolution: 'Auction postponed, tenant to pay rest Friday' }));
+  assert.ok(!ok(await get(`/alerts?facility=${target.facility_id}`)).lienPayments.some((a) => a.id === alert.id));
+  assert.equal((await put(`/tasks/${alert.id}`, { status: 'open' })).status, 400, 'resolved alerts stay resolved');
+  const done = ok(await get(`/tasks?facility=${target.facility_id}`)).find((t) => t.id === alert.id);
+  assert.match(done.resolution, /Auction postponed/);
+  // the facility threshold controls which stages count
+  ok(await put(`/settings/facility/${target.facility_id}`, { lien_alert_step: 'auction' }));
+  const early = ok(await get(`/pastdues?facility=${target.facility_id}`)).rows.find((x) => x.lien_status === 'late_notice' || x.lien_status === 'reminder' || x.lien_status === 'overlock');
+  if (early) assert.equal(ok(await post(`/tenants/${early.tenant_id}/payments`, { amount: 1, method: 'cash' })).lienAlert, null);
+  ok(await put(`/settings/facility/${target.facility_id}`, { lien_alert_step: 'pre_lien' }));
+});
+
+test('walkthrough order: property manager sets a route; incomplete routes rejected', async () => {
+  const rows = ok(await get('/walkthrough?facility=1', 'pm')).rows;
+  assert.ok(rows.filter((r) => !r.walk_order).every((r) => r.number === 'Z001'), 'demo facility has a walk order (only the unit added by an earlier test is unplaced)');
+  const ids = rows.map((r) => r.id).reverse();
+  assert.equal((await put('/walkthrough/order', { facility_id: 1, unit_ids: ids }, 'asst')).status, 403, 'assistant cannot set the route');
+  assert.equal((await put('/walkthrough/order', { facility_id: 1, unit_ids: ids.slice(1) }, 'pm')).status, 400, 'every unit must be listed');
+  assert.equal((await put('/walkthrough/order', { facility_id: 1, unit_ids: [...ids, ids[0]] }, 'pm')).status, 400, 'no duplicates');
+  const foreign = ok(await get('/walkthrough?facility=2')).rows[0].id;
+  assert.equal((await put('/walkthrough/order', { facility_id: 1, unit_ids: [...ids.slice(1), foreign] }, 'pm')).status, 400, 'no units from other facilities');
+  assert.equal((await put('/walkthrough/order', { facility_id: 2, unit_ids: ids }, 'pm')).status, 403);
+  ok(await put('/walkthrough/order', { facility_id: 1, unit_ids: ids }, 'pm'));
+  const after = ok(await get('/walkthrough?facility=1', 'pm')).rows;
+  assert.equal(after.find((r) => r.id === ids[0]).walk_order, 1);
+  assert.equal(after.find((r) => r.id === ids.at(-1)).walk_order, ids.length);
 });

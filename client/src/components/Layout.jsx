@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Users, DoorOpen, Map, PhoneCall, AlertTriangle, MessageSquare, ShoppingCart, Calculator, TrendingUp, ListTodo,
-  ClipboardList, KeyRound, ClipboardCheck, BarChart3, History, Settings, Search, LogOut, Building2, Menu, X, Warehouse, UserPlus, DollarSign, ChevronDown,
+  ClipboardList, KeyRound, ClipboardCheck, BarChart3, History, Settings, Search, LogOut, Building2, Menu, X, Warehouse, UserPlus, DollarSign, ChevronDown, Bell, Siren,
 } from 'lucide-react';
 import { useApp } from '../lib/store.jsx';
 import { api } from '../lib/api.js';
@@ -11,10 +11,10 @@ import { cx, Badge } from './ui.jsx';
 const NAV = [
   { section: 'Operations', items: [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard.view', end: true },
+    { to: '/reminders', label: 'Reminders & Tasks', icon: ListTodo, badge: true },
     { to: '/tenants', label: 'Tenants', icon: Users, perm: 'tenants.view' },
     { to: '/move-in', label: 'Move-In', icon: DoorOpen, perm: 'movein.perform' },
     { to: '/units', label: 'Units & Site Map', icon: Map, perm: 'units.view' },
-    { to: '/reminders', label: 'Reminders', icon: ListTodo },
     { to: '/walkthrough', label: 'Walkthrough', icon: ClipboardList, perm: 'walkthrough.view' },
     { to: '/gate', label: 'Gate Access', icon: KeyRound, perm: 'gate.manage' },
   ] },
@@ -39,10 +39,10 @@ const NAV = [
 export function allowed(can, perm) { return !perm || (Array.isArray(perm) ? perm.some(can) : can(perm)); }
 
 export default function Layout() {
-  const { user, can, logout, me } = useApp();
+  const { user, can, logout, me, alerts, refreshAlerts } = useApp();
   const [open, setOpen] = useState(false);
   const loc = useLocation();
-  useEffect(() => setOpen(false), [loc.pathname]);
+  useEffect(() => { setOpen(false); refreshAlerts(); }, [loc.pathname, refreshAlerts]);
   const demo = me && !me.integrations.payments;
 
   return (
@@ -64,6 +64,7 @@ export default function Layout() {
                 {items.map((i) => (
                   <NavLink key={i.to} to={i.to} end={i.end} className={({ isActive }) => cx('mb-0.5 flex items-center gap-3 rounded-md px-3 py-2 text-sm transition', isActive ? 'bg-brand-600 text-white' : 'hover:bg-white/5 hover:text-white')}>
                     <i.icon className="h-4 w-4 shrink-0" />{i.label}
+                    {i.badge && alerts.total > 0 && <span className={cx('ml-auto rounded-full px-1.5 text-xs font-bold', alerts.lienPayments.length ? 'bg-red-500 text-white' : 'bg-amber-400 text-slate-900')}>{alerts.total}</span>}
                   </NavLink>
                 ))}
               </div>
@@ -85,9 +86,20 @@ export default function Layout() {
           <GlobalSearch />
           <div className="ml-auto flex items-center gap-2">
             {demo && <span className="hidden lg:block"><Badge color="amber">Demo mode · integrations simulated</Badge></span>}
+            <NavLink to="/reminders" title="Reminders & alerts" className="relative rounded-md p-2 text-slate-500 hover:bg-slate-100">
+              <Bell className="h-5 w-5" />
+              {alerts.total > 0 && <span className={cx('absolute -right-0.5 -top-0.5 min-w-[1.1rem] rounded-full px-1 text-center text-[11px] font-bold leading-[1.1rem]', alerts.lienPayments.length ? 'bg-red-600 text-white' : 'bg-amber-400 text-slate-900')}>{alerts.total}</span>}
+            </NavLink>
             <QuickActions />
           </div>
         </header>
+        {alerts.lienPayments.length > 0 && loc.pathname !== '/reminders' && (
+          <NavLink to="/reminders" className="flex items-center gap-2 bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 no-print">
+            <Siren className="h-4 w-4 shrink-0 animate-pulse" />
+            <span className="truncate">{alerts.lienPayments.length === 1 ? `Payment taken from a tenant in lien status: ${alerts.lienPayments[0].tenant_first} ${alerts.lienPayments[0].tenant_last}` : `${alerts.lienPayments.length} payments taken from tenants in lien status`} – review and take action now</span>
+            <span className="ml-auto shrink-0 underline">Review →</span>
+          </NavLink>
+        )}
         <main className="print-area flex-1 overflow-y-auto p-3 sm:p-5">
           <Outlet />
         </main>

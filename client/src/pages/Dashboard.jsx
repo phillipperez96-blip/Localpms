@@ -1,17 +1,20 @@
 import { useNavigate, Link } from 'react-router-dom';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar, Legend } from 'recharts';
-import { Building, DoorOpen, DoorClosed, AlertTriangle, PhoneCall, Percent, DollarSign, Gavel, ClipboardCheck, ShoppingCart, LayoutDashboard, CheckCircle2, Circle, ArrowRight, Lock } from 'lucide-react';
+import { Building, DoorOpen, DoorClosed, AlertTriangle, PhoneCall, Percent, DollarSign, Gavel, ClipboardCheck, ShoppingCart, LayoutDashboard, CheckCircle2, Circle, ArrowRight, Lock, ListTodo, Zap } from 'lucide-react';
 import { useApp, useApi } from '../lib/store.jsx';
 import { money, pct, date, lienLabel, num } from '../lib/format.js';
-import { Card, Stat, Spinner, ErrorBox, Badge, PageHeader, Empty, lienColor, daysColor } from '../components/ui.jsx';
+import { Card, Stat, Spinner, ErrorBox, Badge, PageHeader, Empty, lienColor, daysColor, cx } from '../components/ui.jsx';
+import { LienAlertList } from '../components/LienAlerts.jsx';
+import { titleCase } from '../lib/format.js';
 
 const S1 = '#2a78d6', S2 = '#eb6834';
 const monthLabel = (m) => new Date(m + '-01T00:00:00').toLocaleDateString('en-US', { month: 'short' });
 const tip = { contentStyle: { borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12 }, cursor: { fill: 'rgba(100,116,139,0.08)' } };
 
 export default function Dashboard() {
-  const { fac, facility, facilityObj, can, user } = useApp();
+  const { fac, facility, facilityObj, can, user, alerts } = useApp();
   const { data: d, loading, error } = useApi(fac('/dashboard'));
+  const auto = useApi(fac('/reminders/auto'));
   const nav = useNavigate();
   const isAll = facility === 'all';
   if (loading && !d) return <Spinner />;
@@ -22,6 +25,8 @@ export default function Dashboard() {
   return (
     <div className="space-y-5">
       <PageHeader icon={LayoutDashboard} title={isAll ? 'Portfolio Dashboard' : facilityObj?.name} subtitle={`Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, ${user.name.split(' ')[0]} · ${date(d.asOf)}`} />
+
+      <LienAlertList items={alerts.lienPayments} showFacility={isAll} />
 
       {d.unclosed && can('dailyclose.perform') && (
         <Link to="/daily-close" className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 hover:bg-amber-100"><AlertTriangle className="h-4 w-4" /> Yesterday's daily close has not been completed. <span className="ml-auto font-medium">Close now →</span></Link>
@@ -35,6 +40,37 @@ export default function Dashboard() {
         <Stat label="Move-Outs (MTD)" value={d.moves.outMTD} sub={`${d.moves.outToday} today · net ${d.moves.net >= 0 ? '+' : ''}${d.moves.net}`} icon={DoorClosed} tone="amber" onClick={() => nav('/reports?r=move_activity')} />
         <Stat label="Open Leads" value={d.leads.open} sub={`${d.leads.new} new · ${d.leads.reservations} reservations`} icon={PhoneCall} tone="purple" onClick={() => nav('/leads')} />
       </div>
+
+      <Card title={<span className="flex items-center gap-2"><ListTodo className="h-4 w-4 text-brand-600" />Reminders & tasks</span>} actions={<Link to="/reminders" className="link text-xs">Open reminders</Link>} bodyClass="grid divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0">
+        <div className="divide-y divide-slate-100">
+          <div className="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">To-do · due soon</div>
+          {d.tasks.length === 0 && d.followUps.length === 0 && <Empty title="All caught up" />}
+          {d.tasks.map((t) => (
+            <Link to="/reminders" key={t.id} className="flex items-start gap-2 px-4 py-2.5 hover:bg-slate-50">
+              <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />
+              <div className="min-w-0 flex-1"><div className="truncate text-sm">{t.title}</div><div className="text-xs text-slate-500">{t.assignee || 'Unassigned'} · due {date(t.due_date)}</div></div>
+              {(t.priority === 'high' || t.priority === 'urgent') && <Badge color="red">{t.priority === 'urgent' ? 'Urgent' : 'High'}</Badge>}
+            </Link>
+          ))}
+          {d.followUps.map((l) => (
+            <Link to={`/leads?open=${l.id}`} key={'l' + l.id} className="flex items-start gap-2 px-4 py-2.5 hover:bg-slate-50">
+              <PhoneCall className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
+              <div className="min-w-0 flex-1"><div className="truncate text-sm">Follow up: {l.first_name} {l.last_name}</div><div className="text-xs text-slate-500">{l.size_wanted} · {l.source} · {l.phone}</div></div>
+            </Link>
+          ))}
+        </div>
+        <div className="divide-y divide-slate-100">
+          <div className="flex items-center gap-1 px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-500"><Zap className="h-3.5 w-3.5 text-amber-500" />Automatic reminders</div>
+          {(auto.data || []).slice(0, 8).map((a, i) => (
+            <Link key={i} to={a.link} className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-slate-50">
+              <Badge color={{ auction: 'red', overlock: 'black', close: 'amber', inventory: 'amber' }[a.kind] || 'purple'}>{titleCase(a.kind)}</Badge>
+              <span className="min-w-0 flex-1 truncate">{a.title}</span>
+              <span className={cx('whitespace-nowrap text-xs', a.due < d.asOf ? 'text-red-600' : 'text-slate-500')}>{a.due === d.asOf ? 'Today' : date(a.due)}</span>
+            </Link>
+          ))}
+          {auto.data && !auto.data.length && <Empty title="Nothing automatic right now" />}
+        </div>
+      </Card>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MiniStat label="Sq Ft Occupancy" value={pct(d.occupancy.sqft)} sub={`${num(d.occupancy.sqftOcc)} / ${num(d.occupancy.sqftTotal)} sq ft`} />
@@ -75,7 +111,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
-        <Card title="Move-ins vs. move-outs" className="xl:col-span-2">
+        <Card title="Move-ins vs. move-outs" className="xl:col-span-3">
           <div className="h-60">
             <ResponsiveContainer>
               <BarChart data={d.trend} margin={{ top: 8, right: 12, left: -16, bottom: 0 }} barGap={2}>
@@ -90,22 +126,7 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
         </Card>
-        <Card title="Today's reminders" actions={<Link to="/reminders" className="link text-xs">View all</Link>} bodyClass="divide-y divide-slate-100">
-          {d.tasks.length === 0 && d.followUps.length === 0 && <Empty title="All caught up" />}
-          {d.tasks.map((t) => (
-            <Link to="/reminders" key={t.id} className="flex items-start gap-2 px-4 py-2.5 hover:bg-slate-50">
-              <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />
-              <div className="min-w-0 flex-1"><div className="truncate text-sm">{t.title}</div><div className="text-xs text-slate-500">{t.assignee || 'Unassigned'} · due {date(t.due_date)}</div></div>
-              {t.priority === 'high' && <Badge color="red">High</Badge>}
-            </Link>
-          ))}
-          {d.followUps.map((l) => (
-            <Link to={`/leads?open=${l.id}`} key={'l' + l.id} className="flex items-start gap-2 px-4 py-2.5 hover:bg-slate-50">
-              <PhoneCall className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
-              <div className="min-w-0 flex-1"><div className="truncate text-sm">Follow up: {l.first_name} {l.last_name}</div><div className="text-xs text-slate-500">{l.size_wanted} · {l.source} · {l.phone}</div></div>
-            </Link>
-          ))}
-        </Card>
+
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
