@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { DollarSign, Mail, DoorClosed, Edit, KeyRound, RefreshCw, Lock, Unlock, ShieldCheck, Plus, Minus, Ban, MessageSquarePlus, Phone, ShoppingCart, Pause, Play, ArrowLeft, CheckCircle2, Circle, Printer, Gavel } from 'lucide-react';
 import { useApp, useApi } from '../lib/store.jsx';
@@ -8,6 +8,7 @@ import { Card, Button, Badge, Spinner, ErrorBox, Tabs, Modal, Field, Input, Sele
 import DataTable from '../components/DataTable.jsx';
 import { PaymentModal } from '../components/Payment.jsx';
 import ComposeModal from '../components/Compose.jsx';
+import { NoteComposer, LeaveWithoutNoteReminder } from '../components/AccountNotes.jsx';
 
 export default function TenantAccount() {
   const { id } = useParams();
@@ -16,6 +17,9 @@ export default function TenantAccount() {
   const { data: d, loading, error, reload } = useApi(`/tenants/${id}`);
   const [tab, setTab] = useState('units');
   const [modal, setModal] = useState(null);
+  const [notesThisVisit, setNotesThisVisit] = useState(0); // notes/calls added since opening this account
+  const noteBox = useRef();
+  useEffect(() => setNotesThisVisit(0), [id]);
   const [run, busy] = useAction();
   if (loading && !d) return <Spinner />;
   if (error) return <ErrorBox error={error} />;
@@ -60,6 +64,9 @@ export default function TenantAccount() {
         </div>
       </div>
 
+      <NoteComposer ref={noteBox} tenantId={t.id} notes={d.notes} reload={reload} onAdded={() => setNotesThisVisit((n) => n + 1)} onUndone={() => setNotesThisVisit((n) => Math.max(0, n - 1))} />
+      <LeaveWithoutNoteReminder enabled={d.facility.note_reminder} notedThisVisit={notesThisVisit > 0} onStay={() => noteBox.current?.focus()} />
+
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4">
           <Card title="Contact & Identification">
@@ -83,7 +90,7 @@ export default function TenantAccount() {
             </div>
           )}
           {tab === 'ledger' && <Ledger rows={d.ledger} reload={reload} />}
-          {tab === 'notes' && <Notes d={d} reload={reload} />}
+          {tab === 'notes' && <Notes d={d} />}
           {tab === 'comms' && (
             <Card bodyClass="divide-y divide-slate-100">
               {d.communications.map((c) => (
@@ -114,7 +121,7 @@ export default function TenantAccount() {
 
       {modal === 'pay' && <PaymentModal open tenant={{ ...t, rent }} balance={a.balance} onClose={() => setModal(null)} onPaid={reload} />}
       {modal === 'msg' && <ComposeModal open target={{ tenant_ids: [t.id] }} title={`Message ${t.first_name} ${t.last_name}`} defaultTemplate={pastDue ? 'late_notice' : undefined} onClose={() => setModal(null)} onSent={reload} />}
-      {modal === 'call' && <LogModal tenant={t} onClose={() => setModal(null)} reload={reload} />}
+      {modal === 'call' && <LogModal tenant={t} onClose={() => setModal(null)} reload={() => { setNotesThisVisit((n) => n + 1); reload(); }} />}
       {modal === 'edit' && <EditTenant tenant={t} onClose={() => setModal(null)} reload={reload} />}
       {modal === 'adjust' && <AdjustModal tenant={t} rentals={active} onClose={() => setModal(null)} reload={reload} />}
       {modal === 'refund' && <RefundModal tenant={t} credit={-a.balance} onClose={() => setModal(null)} reload={reload} />}
@@ -254,25 +261,25 @@ function Ledger({ rows, reload }) {
   );
 }
 
-function Notes({ d, reload }) {
-  const [note, setNote] = useState('');
-  const [run, busy] = useAction();
+function Notes({ d }) {
+  const [show, setShow] = useState('all');
+  const items = [
+    ...d.notes.map((n) => ({ key: 'n' + n.id, at: n.created_at, who: n.user_name, kind: 'note', label: 'Note', text: n.body })),
+    ...d.history.map((h) => ({ key: 'h' + h.id, at: h.created_at, who: h.user_name, kind: h.action, label: titleCase(h.action), text: h.details })),
+  ].filter((x) => show === 'all' || (show === 'notes' ? x.kind === 'note' : x.kind !== 'note')).sort((a, b) => (a.at < b.at ? 1 : -1));
   return (
     <Card>
-      <div className="mb-4 flex gap-2 no-print">
-        <Textarea rows={2} placeholder="Add an account note…" value={note} onChange={(e) => setNote(e.target.value)} />
-        <Button icon={MessageSquarePlus} loading={busy} disabled={!note.trim()} onClick={() => run(() => api.post(`/tenants/${d.tenant.id}/notes`, { note }).then(() => { setNote(''); reload(); }), 'Note added')}>Add</Button>
-      </div>
+      <div className="mb-4 flex gap-1.5 no-print">{[['all', 'Everything'], ['notes', 'Notes only'], ['history', 'Account history']].map(([k, l]) => <button key={k} onClick={() => setShow(k)} className={`rounded-full px-3 py-1 text-xs font-medium ${show === k ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{l}</button>)}</div>
       <ol className="relative space-y-3 border-l border-slate-200 pl-4">
-        {d.notes.map((n) => (
-          <li key={n.id}>
-            <div className={`absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border-2 border-white ${n.action === 'note' ? 'bg-amber-400' : n.action === 'payment' ? 'bg-emerald-500' : n.action.includes('lien') || n.action === 'overlock' ? 'bg-red-500' : 'bg-slate-400'}`} />
-            <div className="text-xs text-slate-500">{dateTime(n.created_at)} · {n.user_name || 'System'} · {titleCase(n.action)}</div>
-            <div className={`text-sm ${n.action === 'note' ? 'rounded bg-amber-50 px-2 py-1' : ''}`}>{n.details}</div>
+        {items.map((n) => (
+          <li key={n.key}>
+            <div className={`absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border-2 border-white ${n.kind === 'note' ? 'bg-amber-400' : n.kind === 'payment' ? 'bg-emerald-500' : n.kind.includes('lien') || n.kind === 'overlock' ? 'bg-red-500' : 'bg-slate-400'}`} />
+            <div className="text-xs text-slate-500">{dateTime(n.at)} · {n.who || 'System'} · {n.label}</div>
+            <div className={`whitespace-pre-wrap text-sm ${n.kind === 'note' ? 'rounded bg-amber-50 px-2 py-1' : ''}`}>{n.text}</div>
           </li>
         ))}
       </ol>
-      {!d.notes.length && <Empty title="No history" />}
+      {!items.length && <Empty title="Nothing yet" />}
     </Card>
   );
 }

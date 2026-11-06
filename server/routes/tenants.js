@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { all, get, run, insert, update, tx } from '../db.js';
 import { scope, requirePerm, assertFacility, can } from '../auth.js';
-import { today, round2, money, addDays } from '../util.js';
+import { today, round2, money, addDays, NOTE_UNDO_SECONDS } from '../util.js';
 import { inList, httpError, facilityConfig, nextLienStep, fullName } from './helpers.js';
 import { facilityAccounts, tenantAccount, gateState, postLedger, logActivity, firstPeriod, applyPromo, generateGateCode, sendTemplate, EMPTY_ACCT } from '../core.js';
 import { chargeCard, refundCard, gateSetAccess } from '../services/integrations.js';
@@ -60,11 +60,12 @@ r.get('/tenants/:id', requirePerm('tenants.view'), (req, res) => {
   const ledger = ledgerRows.map((l) => { if (!l.voided) bal += l.type === 'charge' || l.type === 'refund' ? l.amount : -l.amount; return { ...l, running: round2(bal) }; }).reverse();
   const active = rentals.filter((x) => x.status === 'active');
   res.json({
-    tenant: t, facility: { id: f.id, name: f.name, gate_deny_days: f.gate_deny_days, lien_steps: f.lien_steps, tax_rate: f.tax_rate, billing_type: f.billing_type },
+    tenant: t, facility: { id: f.id, name: f.name, note_reminder: !!f.note_reminder, gate_deny_days: f.gate_deny_days, lien_steps: f.lien_steps, tax_rate: f.tax_rate, billing_type: f.billing_type },
     account: acct, gate: gateState(t, acct, f, active.length > 0), rentals, ledger,
     communications: all('SELECT c.*, u.name user_name FROM communications c LEFT JOIN users u ON u.id=c.user_id WHERE tenant_id=? ORDER BY c.id DESC', t.id),
     lienEvents: all('SELECT e.*, u.name user_name, un.number unit FROM lien_events e LEFT JOIN users u ON u.id=e.user_id LEFT JOIN rentals r ON r.id=e.rental_id LEFT JOIN units un ON un.id=r.unit_id WHERE e.tenant_id=? ORDER BY e.id DESC', t.id),
-    notes: all("SELECT a.*, u.name user_name FROM activity_log a LEFT JOIN users u ON u.id=a.user_id WHERE entity_type='tenant' AND entity_id=? ORDER BY a.id DESC LIMIT 200", t.id),
+    notes: all('SELECT n.*, u.name user_name FROM tenant_notes n LEFT JOIN users u ON u.id=n.user_id WHERE n.tenant_id=? ORDER BY n.created_ms DESC', t.id).map(noteView(req)),
+    history: all("SELECT a.*, u.name user_name FROM activity_log a LEFT JOIN users u ON u.id=a.user_id WHERE entity_type='tenant' AND entity_id=? AND action NOT IN ('note','note_undo') ORDER BY a.id DESC LIMIT 200", t.id),
     gateEvents: all('SELECT * FROM gate_events WHERE tenant_id=? ORDER BY id DESC LIMIT 30', t.id),
     sales: all('SELECT * FROM sales WHERE tenant_id=? ORDER BY id DESC', t.id),
     auctions: all('SELECT a.*, u.number FROM auctions a JOIN units u ON u.id=a.unit_id WHERE a.tenant_id=? ORDER BY a.id DESC', t.id),
@@ -82,11 +83,33 @@ r.put('/tenants/:id', requirePerm('tenants.edit'), (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- account notes (author can undo for NOTE_UNDO_SECONDS, then permanent) ----------
+const UNDO_GRACE_MS = 5000; // allowance for network delay; the screen shows the exact window
+const noteView = (req) => (n) => {
+  const remaining = n.user_id === req.user.id ? Math.max(0, Math.ceil((n.created_ms + NOTE_UNDO_SECONDS * 1000 - Date.now()) / 1000)) : 0;
+  return { ...n, undo_seconds_left: remaining };
+};
+
 r.post('/tenants/:id/notes', requirePerm('tenants.view'), (req, res) => {
   const t = loadTenant(req, req.params.id);
-  if (!req.body.note?.trim()) throw httpError(400, 'Note is empty');
-  logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: 'tenant', entity_id: t.id, action: 'note', details: req.body.note.trim() });
-  res.json({ ok: true });
+  const body = String(req.body.note || '').trim();
+  if (!body) throw httpError(400, 'Note is empty');
+  if (body.length > 5000) throw httpError(400, 'Note is too long (5,000 characters max)');
+  const id = insert('tenant_notes', { facility_id: t.facility_id, tenant_id: t.id, user_id: req.user.id, body, created_ms: Date.now() });
+  logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: 'tenant', entity_id: t.id, action: 'note', details: body });
+  const n = get('SELECT n.*, u.name user_name FROM tenant_notes n LEFT JOIN users u ON u.id=n.user_id WHERE n.id=?', id);
+  res.json({ note: noteView(req)(n), undo_seconds: NOTE_UNDO_SECONDS });
+});
+
+r.delete('/tenants/:id/notes/:noteId', requirePerm('tenants.view'), (req, res) => {
+  const t = loadTenant(req, req.params.id);
+  const n = get('SELECT * FROM tenant_notes WHERE id=? AND tenant_id=?', Number(req.params.noteId), t.id);
+  if (!n) throw httpError(404, 'Note not found');
+  if (n.user_id !== req.user.id) throw httpError(403, 'Only the person who wrote a note can undo it');
+  if (Date.now() - n.created_ms > NOTE_UNDO_SECONDS * 1000 + UNDO_GRACE_MS) throw httpError(400, `The ${NOTE_UNDO_SECONDS}-second undo window has passed – this note is now permanent`);
+  run('DELETE FROM tenant_notes WHERE id=?', n.id);
+  logActivity({ facility_id: t.facility_id, user_id: req.user.id, entity_type: 'tenant', entity_id: t.id, action: 'note_undo', details: `Note withdrawn within the undo window: "${n.body.slice(0, 120)}"` });
+  res.json({ ok: true, body: n.body });
 });
 
 r.post('/tenants/:id/gate', requirePerm('gate.manage'), async (req, res) => {

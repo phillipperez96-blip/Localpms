@@ -81,9 +81,38 @@ function FacilitySettings() {
         <Card title="Gate access">
           <Field label="Deny gate access when past due by (days)" hint="Tenants on 'Automatic' are locked out at this many days past due and restored automatically when paid."><Input type="number" min="1" value={f.gate_deny_days} onChange={s('gate_deny_days', true)} /></Field>
         </Card>
+        <NoteReminderCard facilityId={facility} enabled={!!f.note_reminder} onChange={(v) => { setF({ ...f, note_reminder: v ? 1 : 0 }); reloadMe(); }} />
         <Button icon={Save} loading={busy} onClick={save}>Save Facility Settings</Button>
       </div>
     </div>
+  );
+}
+
+function NoteReminderCard({ facilityId, enabled, onChange }) {
+  const { can, facilities } = useApp();
+  const [run, busy] = useAction();
+  if (!can('settings.note_reminder')) return null;
+  const set = (facility_id, on) => run(() => api.put('/settings/note-reminder', { facility_id, enabled: on }).then(() => onChange(on)), `Note reminder turned ${on ? 'on' : 'off'}${facility_id === 'all' ? ' for all your facilities' : ''}`);
+  return (
+    <Card title="Account note reminder">
+      <label className="flex cursor-pointer items-start gap-3">
+        <button type="button" role="switch" aria-checked={enabled} disabled={busy} onClick={() => set(Number(facilityId), !enabled)}
+          className={cx('relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition', enabled ? 'bg-brand-600' : 'bg-slate-300')}>
+          <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', enabled ? 'left-[22px]' : 'left-0.5')} />
+        </button>
+        <span className="text-sm">
+          <span className="font-medium">Remind staff to leave a note</span>
+          <span className="block text-slate-500">When on, anyone leaving a tenant&rsquo;s account without adding a note (or logging a call) during that visit is asked: &ldquo;Are you sure you wish to leave the tenant&rsquo;s account without making a note?&rdquo;</span>
+        </span>
+      </label>
+      {facilities.length > 1 && (
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3 text-xs">
+          <span className="self-center text-slate-500">All my facilities:</span>
+          <Button size="sm" variant="secondary" loading={busy} onClick={() => set('all', true)}>Turn on everywhere</Button>
+          <Button size="sm" variant="secondary" loading={busy} onClick={() => set('all', false)}>Turn off everywhere</Button>
+        </div>
+      )}
+    </Card>
   );
 }
 

@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS facilities (
   phone TEXT, email TEXT, office_hours TEXT, gate_hours TEXT,
   billing_type TEXT DEFAULT 'anniversary', prorate INTEGER DEFAULT 1, tax_rate REAL DEFAULT 0.0825,
   admin_fee REAL DEFAULT 25, deposit REAL DEFAULT 0, gate_deny_days INTEGER DEFAULT 6,
-  lien_automation TEXT DEFAULT 'auto', reservation_days INTEGER DEFAULT 7,
+  lien_automation TEXT DEFAULT 'auto', reservation_days INTEGER DEFAULT 7, note_reminder INTEGER DEFAULT 0,
   late_fees TEXT, lien_steps TEXT, audit_template TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS roles (
@@ -160,6 +160,11 @@ CREATE TABLE IF NOT EXISTS activity_log (
   action TEXT, details TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS ix_activity ON activity_log(facility_id, created_at);
+CREATE TABLE IF NOT EXISTS tenant_notes (
+  id INTEGER PRIMARY KEY, facility_id INTEGER, tenant_id INTEGER NOT NULL, user_id INTEGER, body TEXT NOT NULL,
+  created_ms INTEGER NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_tenant_notes ON tenant_notes(tenant_id);
 CREATE TABLE IF NOT EXISTS system_state (key TEXT PRIMARY KEY, value TEXT);
 `;
 
@@ -168,6 +173,22 @@ export function migrate() {
   // lightweight column migrations for databases created by older builds
   const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
   if (!cols('tenants').includes('delinquent_since')) db.exec('ALTER TABLE tenants ADD COLUMN delinquent_since TEXT');
+  if (!cols('facilities').includes('note_reminder')) db.exec('ALTER TABLE facilities ADD COLUMN note_reminder INTEGER DEFAULT 0');
+  // move notes written by older builds (kept in the activity log) into the notes table, once
+  if (!db.prepare("SELECT 1 x FROM system_state WHERE key='notes_migrated'").get()) {
+    db.exec(`INSERT INTO tenant_notes (facility_id, tenant_id, user_id, body, created_ms, created_at)
+      SELECT facility_id, entity_id, user_id, details, CAST((julianday(created_at) - 2440587.5) * 86400000 AS INTEGER), created_at
+      FROM activity_log WHERE entity_type='tenant' AND action='note' AND entity_id IS NOT NULL`);
+    db.exec("INSERT INTO system_state(key,value) VALUES('notes_migrated','1')");
+  }
+  // grant the note-reminder permission to senior roles on databases created before it existed
+  if (!db.prepare("SELECT 1 x FROM system_state WHERE key='perm_note_reminder'").get()) {
+    for (const r of db.prepare("SELECT id, permissions FROM roles WHERE slug IN ('admin','dm','am')").all()) {
+      const perms = JSON.parse(r.permissions || '[]');
+      if (!perms.includes('settings.note_reminder')) { perms.push('settings.note_reminder'); db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify(perms), r.id); }
+    }
+    db.exec("INSERT INTO system_state(key,value) VALUES('perm_note_reminder','1')");
+  }
 }
 
 export function resetDatabase() {

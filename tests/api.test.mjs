@@ -27,7 +27,7 @@ const ok = (r, msg) => { assert.ok(r.status >= 200 && r.status < 300, `${msg || 
 const USERS = { admin: 'admin@demo.com', dm: 'dm@demo.com', am: 'am@demo.com', pm: 'pm@demo.com', pm2: 'pm2@demo.com', pm3: 'pm3@demo.com', asst: 'asst@demo.com' };
 
 before(async () => {
-  server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT), DATA_DIR }, stdio: ['ignore', 'pipe', 'pipe'] });
+  server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.js'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT), DATA_DIR, NOTE_UNDO_SECONDS: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   server.stdout.on('data', (d) => { log += d; });
   server.stderr.on('data', (d) => { log += d; });
@@ -341,4 +341,49 @@ test('nightly processing endpoint is idempotent', async () => {
   ok(await post('/settings/run-daily', {}));
   const r = ok(await post('/settings/run-daily', {}));
   for (const s of Object.values(r)) { assert.equal(s.rentPosted, 0); assert.equal(s.lateFees, 0); assert.equal(s.lienSteps, 0); }
+});
+
+test('account notes: author can undo within the window, then the note is permanent', async () => {
+  const t = ok(await get('/tenants?facility=1', 'pm')).find((x) => x.status === 'active');
+  assert.equal((await post(`/tenants/${t.id}/notes`, { note: '   ' }, 'pm')).status, 400, 'empty note rejected');
+  // undo right away: the note is removed and its text is returned for editing
+  const a = ok(await post(`/tenants/${t.id}/notes`, { note: 'Called about balance' }, 'pm'));
+  assert.equal(a.undo_seconds, 1);
+  assert.ok(a.note.undo_seconds_left >= 1);
+  const u = ok(await call('DELETE', `/tenants/${t.id}/notes/${a.note.id}`, null, 'pm'));
+  assert.equal(u.body, 'Called about balance');
+  let acct = ok(await get(`/tenants/${t.id}`, 'pm'));
+  assert.ok(!acct.notes.some((n) => n.id === a.note.id), 'undone note is gone');
+  assert.ok(!acct.history.some((h) => h.action === 'note' || h.action === 'note_undo'), 'notes are not duplicated in the history list');
+  const log = ok(await get('/activity?facility=1&entity=tenant'));
+  assert.ok(log.some((x) => x.action === 'note_undo'), 'undo is recorded in the activity log');
+  // someone else cannot undo your note
+  const b = ok(await post(`/tenants/${t.id}/notes`, { note: 'Promised to pay Friday' }, 'pm'));
+  assert.equal((await call('DELETE', `/tenants/${t.id}/notes/${b.note.id}`, null, 'admin')).status, 403);
+  // other users never see an undo timer on it
+  assert.equal(ok(await get(`/tenants/${t.id}`, 'admin')).notes.find((n) => n.id === b.note.id).undo_seconds_left, 0);
+  // after the window (1s here + 5s network grace) the note is permanent
+  await new Promise((r) => setTimeout(r, 6500));
+  assert.equal((await call('DELETE', `/tenants/${t.id}/notes/${b.note.id}`, null, 'pm')).status, 400);
+  acct = ok(await get(`/tenants/${t.id}`, 'pm'));
+  const kept = acct.notes.find((n) => n.id === b.note.id);
+  assert.equal(kept.body, 'Promised to pay Friday');
+  assert.equal(kept.undo_seconds_left, 0);
+  // a PM cannot add notes to another facility's tenant
+  const other = ok(await get('/tenants?facility=2')).find((x) => x.status === 'active');
+  assert.equal((await post(`/tenants/${other.id}/notes`, { note: 'x' }, 'pm')).status, 403);
+});
+
+test('note reminder setting: only higher-ups can toggle it', async () => {
+  assert.equal(ok(await get('/tenants/1', 'pm')).facility.note_reminder, true, 'demo facilities start with the reminder on');
+  assert.equal((await put('/settings/note-reminder', { facility_id: 1, enabled: false }, 'pm')).status, 403, 'property manager cannot turn it off');
+  assert.equal((await put('/settings/facility/1', { note_reminder: 0 }, 'pm')).status, 403, 'not even through the facility settings form');
+  assert.equal((await put('/settings/note-reminder', { facility_id: 3, enabled: false }, 'am')).status, 403, 'area manager limited to their facilities');
+  ok(await put('/settings/note-reminder', { facility_id: 1, enabled: false }, 'am'));
+  assert.equal(ok(await get('/tenants/1', 'pm')).facility.note_reminder, false);
+  ok(await put('/settings/note-reminder', { facility_id: 'all', enabled: true }, 'dm'));
+  const me = ok(await get('/me', 'dm'));
+  assert.ok(me.facilities.every((f) => f.note_reminder === 1));
+  // PM can still save other facility settings without touching the reminder
+  ok(await put('/settings/facility/1', { gate_deny_days: 6 }, 'pm'));
 });

@@ -3,7 +3,7 @@ import { get, all } from '../db.js';
 import { verifyPassword, createSession, loadUser, requireAuth } from '../auth.js';
 import { run } from '../db.js';
 import { integrationStatus } from '../services/integrations.js';
-import { PERMISSIONS } from '../util.js';
+import { PERMISSIONS, NOTE_UNDO_SECONDS } from '../util.js';
 import { logActivity } from '../core.js';
 import dashboard from './dashboard.js';
 import tenants from './tenants.js';
@@ -42,9 +42,9 @@ r.use(requireAuth);
 r.post('/auth/logout', (req, res) => { run('DELETE FROM sessions WHERE token=?', req.token); res.json({ ok: true }); });
 
 r.get('/me', (req, res) => {
-  const facilities = all(`SELECT id, name, code, city, state, billing_type, tax_rate, admin_fee, gate_deny_days, reservation_days FROM facilities WHERE id IN ${inList(req.user.facility_ids)} ORDER BY id`, ...req.user.facility_ids);
+  const facilities = all(`SELECT id, name, code, city, state, billing_type, tax_rate, admin_fee, gate_deny_days, reservation_days, note_reminder FROM facilities WHERE id IN ${inList(req.user.facility_ids)} ORDER BY id`, ...req.user.facility_ids);
   const integ = integrationStatus();
-  res.json({ user: req.user, facilities, permissions: PERMISSIONS, integrations: { stripePublishableKey: integ.payments.publishableKey, payments: integ.payments.connected, email: integ.email.connected, sms: integ.sms.connected, gate: integ.gate.connected } });
+  res.json({ user: req.user, facilities, permissions: PERMISSIONS, noteUndoSeconds: NOTE_UNDO_SECONDS, integrations: { stripePublishableKey: integ.payments.publishableKey, payments: integ.payments.connected, email: integ.email.connected, sms: integ.sms.connected, gate: integ.gate.connected } });
 });
 
 r.get('/search', (req, res) => {

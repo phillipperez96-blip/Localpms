@@ -59,7 +59,7 @@ export async function seedDatabase() {
     const fid = insert('facilities', {
       name: F.name, code: F.code, address: F.address, city: F.city, state: F.state, zip: F.zip, phone: F.phone, email: F.email,
       office_hours: 'Mon–Fri 9:30am–6pm, Sat 9am–5pm, Sun Closed', gate_hours: '6:00am – 10:00pm daily',
-      billing_type: F.billing_type, prorate: 1, tax_rate: 0.0825, admin_fee: 25, deposit: 0, gate_deny_days: 6, lien_automation: 'auto', reservation_days: 7,
+      billing_type: F.billing_type, prorate: 1, tax_rate: 0.0825, admin_fee: 25, deposit: 0, gate_deny_days: 6, lien_automation: 'auto', reservation_days: 7, note_reminder: 1,
       late_fees: DEFAULT_LATE_FEES, lien_steps: DEFAULT_LIEN_STEPS, audit_template: DEFAULT_AUDIT_TEMPLATE,
     });
     facIds.push(fid);
@@ -317,6 +317,18 @@ export async function seedDatabase() {
       for (const [title, cat, pr] of taskList) {
         const done = chance(0.3);
         insert('tasks', { facility_id: fid, title, category: cat, priority: pr, due_date: addDays(T, ri(-4, 12)), status: done ? 'done' : 'open', assigned_to: chance(0.7) ? pm : uid['asst@demo.com'], created_by: chance(0.5) ? uid['dm@demo.com'] : pm, source: 'manual', completed_at: done ? addDays(T, -1) : null, completed_by: done ? pm : null });
+      }
+
+      // ---- account notes (conversation history)
+      const NOTES = ['Called about balance – promised to pay Friday.', 'Tenant asked about upsizing to a 10x15 next month.', 'Stopped by office, updated phone number.',
+        'Left voicemail regarding past-due balance.', 'Asked about autopay – emailed instructions.', 'Reported light out near unit, submitted work order.',
+        'Tenant traveling for work until the 20th, will pay online.', 'Discussed protection plan options, wants to think about it.', 'Requested a copy of last receipt – emailed.',
+        'Very friendly, long-time customer. Referred a friend.', 'Payment arrangement: half now, remainder by the 15th.', 'Called to confirm gate hours for holiday weekend.'];
+      for (const t of all("SELECT id FROM tenants WHERE facility_id=? AND status='active' ORDER BY RANDOM() LIMIT 40", fid)) {
+        for (let k = 0; k < ri(1, 3); k++) {
+          const when = new Date(Date.now() - ri(1, 200) * 86400000 - ri(0, 8 * 3600) * 1000);
+          insert('tenant_notes', { facility_id: fid, tenant_id: t.id, user_id: chance(0.8) ? pm : uid['asst@demo.com'], body: pick(NOTES), created_ms: when.getTime(), created_at: when.toISOString().replace('T', ' ').slice(0, 19) });
+        }
       }
 
       // ---- scheduled rent increases

@@ -48,7 +48,7 @@ The first launch creates the database (`data/storage.db`) and generates demo dat
 
 **Development mode** (hot reload): `npm run dev`, then open http://localhost:5173.
 
-**Automated tests:** `npm test` runs 34 engine and API tests on a throwaway database. They cover billing math, the lien cycle, permissions, facility isolation and every workflow.
+**Automated tests:** `npm test` runs 36 engine and API tests on a throwaway database. They cover billing math, the lien cycle, permissions, facility isolation and every workflow.
 
 ---|---|---|
 | Admin | admin@demo.com | Everything, all facilities |
@@ -73,6 +73,8 @@ The first launch creates the database (`data/storage.db`) and generates the demo
 - Lien progress tracker with a button to complete the next step
 - Gate code management, notes and history timeline, communications, lien history, purchases
 - Edit info, log a call, send a message, move out
+- **Account notes:** a note box at the top of every account for jotting down what a conversation was about. After saving, the author has **30 seconds to Undo**, which removes the note and puts its text back in the box for editing. After that the note is permanent. Undos are recorded in the Activity Log.
+- **"Leave without a note?" reminder:** when switched on for a facility, anyone leaving a tenant's account without adding a note (or logging a call) during that visit is asked *"Are you sure you wish to leave the tenant's account without making a note?"* (Yes / No). Higher-ups switch it on or off in **Settings → Facility → Account note reminder**, per facility or for all of their facilities at once. It's controlled by the *Turn the "leave account without a note" reminder on/off* permission, which Admin, District Manager and Area Manager have by default. It is on in the demo data.
 
 **Guided move-in.** Five steps: choose unit, tenant (new or existing), terms (rent, promotion, protection plan, gate code), lease (agreement and on-screen signature), then payment. Proration follows facility billing settings. It automatically creates the gate code, sends a welcome email and converts the lead.
 

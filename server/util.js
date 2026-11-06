@@ -77,11 +77,15 @@ export const PERMISSIONS = [
   ['audits.respond', 'Audits', 'Respond to / acknowledge audits'],
   ['activity.view', 'Admin', 'View activity log'],
   ['settings.facility', 'Admin', 'Edit facility settings, fees & lien schedule'],
+  ['settings.note_reminder', 'Admin', 'Turn the "leave account without a note" reminder on/off'],
   ['settings.users', 'Admin', 'Manage users'],
   ['settings.roles', 'Admin', 'Manage roles & permissions'],
   ['settings.integrations', 'Admin', 'Manage integrations & system tools'],
 ];
 export const ALL_PERMS = PERMISSIONS.map((p) => p[0]);
+
+/** How long (seconds) the author of a tenant note can undo it. */
+export const NOTE_UNDO_SECONDS = Number(process.env.NOTE_UNDO_SECONDS) || 30;
 
 const without = (...ex) => ALL_PERMS.filter((p) => !ex.includes(p));
 export const DEFAULT_ROLES = [
@@ -91,7 +95,7 @@ export const DEFAULT_ROLES = [
   { slug: 'am', name: 'Area Manager', rank: 60, description: 'Supports district manager; audits and coaching',
     permissions: without('settings.roles', 'settings.integrations', 'settings.users') },
   { slug: 'pm', name: 'Property Manager', rank: 40, description: 'Runs day-to-day operations of a facility',
-    permissions: without('portfolio.view', 'audits.perform', 'settings.roles', 'settings.integrations', 'settings.users', 'payments.refund') },
+    permissions: without('portfolio.view', 'audits.perform', 'settings.roles', 'settings.integrations', 'settings.users', 'payments.refund', 'settings.note_reminder') },
   { slug: 'asst', name: 'Assistant Manager', rank: 20, description: 'Front-desk operations',
     permissions: ['dashboard.view', 'tenants.view', 'tenants.edit', 'movein.perform', 'moveout.perform', 'payments.take', 'dailyclose.perform',
       'units.view', 'walkthrough.view', 'gate.manage', 'pastdue.manage', 'leads.manage', 'merch.sell', 'communications.send', 'tasks.manage', 'audits.view'] },

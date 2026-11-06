@@ -32,7 +32,24 @@ r.put('/settings/facility/:id', requirePerm('settings.facility'), (req, res) => 
   if (b.late_fees) b.late_fees = [...b.late_fees].sort((a, c) => a.day - c.day);
   const ch = Object.fromEntries(FF.filter((k) => b[k] !== undefined).map((k) => [k, b[k]]));
   update('facilities', id, ch);
+  if (b.note_reminder !== undefined) setNoteReminder(req, [id], b.note_reminder);
   logActivity({ facility_id: id, user_id: req.user.id, entity_type: 'settings', entity_id: id, action: 'update', details: `Facility settings updated (${Object.keys(ch).join(', ')})` });
+  res.json({ ok: true });
+});
+
+function setNoteReminder(req, ids, on) {
+  if (!req.user.permissions.includes('settings.note_reminder')) throw httpError(403, 'You do not have permission to change the note reminder');
+  for (const id of ids) {
+    assertFacility(req, id);
+    update('facilities', id, { note_reminder: on ? 1 : 0 });
+    logActivity({ facility_id: id, user_id: req.user.id, entity_type: 'settings', entity_id: id, action: 'note_reminder', details: `"Leave account without a note" reminder turned ${on ? 'ON' : 'OFF'}` });
+  }
+}
+
+/** Toggle the note reminder for one facility or all of the user's facilities. */
+r.put('/settings/note-reminder', requirePerm('settings.note_reminder'), (req, res) => {
+  const ids = req.body.facility_id === 'all' ? req.user.facility_ids : [Number(req.body.facility_id)];
+  setNoteReminder(req, ids, !!req.body.enabled);
   res.json({ ok: true });
 });
 
